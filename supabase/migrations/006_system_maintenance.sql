@@ -132,7 +132,7 @@ language plpgsql stable security definer set search_path='' as $$
 begin
   perform private.require_app_admin();
   if p_days not in (90,180,365) or p_days is null then raise exception 'Choose 90, 180, or 365 days'; end if;
-  return query select p.id,p.display_name,u.email,greatest(p.last_active_at,coalesce(u.last_sign_in_at,p.created_at)),
+  return query select p.id,p.display_name,u.email::text,greatest(p.last_active_at,coalesce(u.last_sign_in_at,p.created_at)),
     (select count(*) from public.folders f where f.owner_id=p.id),
     (select count(*) from public.study_assets a where a.created_by=p.id),d.delete_after,d.reason
   from public.profiles p join auth.users u on u.id=p.id left join private.account_deletions d on d.user_id=p.id

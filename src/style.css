@@ -479,6 +479,16 @@ svg { flex-shrink: 0; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto !important; } }
 
 /* Guided generation and reviewer tools. */
+.seed-balance { border-top: 1px solid #d5dfc1; margin-top: 18px; padding-top: 13px; text-align: left; }
+.seed-balance > div { display: flex; align-items: center; gap: 10px; justify-content: center; }.seed-icon { width: 36px; height: 36px; flex: 0 0 36px; }
+.seed-balance > div > span { display: grid; gap: 3px; min-width: 0; }.seed-balance strong { font-size: 22px; font-weight: 550; color: #647347; }.seed-balance strong small { font-size: 12px; font-weight: 500; }.seed-balance > p { font-size: 10px; line-height: 1.55; text-align: center; margin-top: 8px; }
+.custom-card-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 17px; }.custom-card-controls .pill { margin-right: auto; }
+.custom-card-editor { padding: 16px; margin-bottom: 20px; border: 1px solid var(--line); border-radius: 8px; background: #f7f7ef; }
+.join-space-form { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 2px; }.join-space-form input { min-width: 0; width: 100%; }
+.invitation-code-button { grid-column: 1 / -1; justify-self: start; }
+.generation-kinds button:disabled,.topic-list button:disabled { opacity: .65; }.topic-list button:disabled { cursor: default; }
+.focus-card,.seed-balance,.generation-dialog,.custom-card-controls,.join-space-form { max-width: 100%; min-width: 0; }
+@media (max-width: 800px) { .seed-balance > div { justify-content: center; }.seed-balance > p { font-size: 11px; }.custom-card-controls .button { flex: 1; }.custom-card-controls .pill { flex-basis: 100%; justify-content: center; margin-right: 0; } }
 /* Only the space rows scroll; creation and profile controls remain anchored. */
 .sidebar { overflow-y: hidden; }
 .sidebar > .brand,.sidebar > .brand-subtitle,.main-navigation,.sidebar-label,.sidebar-footer { flex-shrink: 0; }

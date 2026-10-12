@@ -4,10 +4,12 @@ import { build } from 'esbuild'
 import { fileURLToPath } from 'node:url'
 const bundled=await build({entryPoints:[fileURLToPath(new URL('../supabase/functions/generate-study/guided.ts',import.meta.url))],bundle:true,write:false,format:'esm',platform:'neutral'})
 const { validateAnalysis,validateGuidedOutput,guidedPrompt,guidedSchema }=await import('data:text/javascript;base64,'+Buffer.from(bundled.outputFiles[0].text).toString('base64'))
+const coverageBundle=await build({entryPoints:[fileURLToPath(new URL('../supabase/functions/generate-study/coverage.ts',import.meta.url))],bundle:true,write:false,format:'esm',platform:'neutral'})
+const {validateCoveredOutput,coveragePrompt,coverageSchema}=await import('data:text/javascript;base64,'+Buffer.from(coverageBundle.outputFiles[0].text).toString('base64'))
 const opts={workflow:'manual',total:10,true_false:3,multiple_choice:3,short_answer:4}
 const questions=()=>Array.from({length:10},(_,i)=>({type:i<3?'true_false':i<6?'multiple_choice':'short_answer',question:'Distinct concept '+String.fromCharCode(97+i),options:i<3?['True','False']:i<6?['A','B','C','D']:[],answer:i<3?'True':'A',accepted_answers:[],explanation:'Source explanation',coverage_key:'source:facet_'+i}))
 test('Analysis assigns stable topic IDs and accepts only integer, evenly divisible topic quiz estimates',()=>{
-  const input={title:'Course',source_text:'A faithful extraction of every important source detail.',topics:[{title:'Topic A',description:'Scope of this topic',card_count:12,quiz_count:18}]}
+  const input={title:'Course',source_text:'A faithful extraction of every important source detail.',topics:[{title:'Topic A',description:'Scope of this topic',card_count:12,quiz_count:18,concepts:[{label:'A precise educational facet',covered_by:[]}]} ]}
   assert.equal(validateAnalysis(input).topics[0].id,'topic-1')
   for(const count of [10,0,33,3.5,'18']) assert.throws(()=>validateAnalysis({...input,topics:[{...input.topics[0],quiz_count:count}]}),/estimates/)
   assert.throws(()=>validateAnalysis({...input,topics:[...input.topics,...input.topics]}),/repeated a topic/)
@@ -50,4 +52,22 @@ test('Large source transport uses Gemini Files API and deletes the provider copy
     globalThis.fetch=async()=>new Response('',{headers:{'x-goog-upload-url':'https://evil.example/upload'}})
     await assert.rejects(geminiFilePart(blob,'application/pdf','fake-key',[]),/invalid upload address/)
   } finally {globalThis.fetch=previousFetch}
+})
+test('Concept inventory maps prior content only to formats with supporting history and never accepts duplicate facets',()=>{
+ const raw={title:'Course',source_text:'Source with a complete definition of this concept.',topics:[{title:'Topic',description:'Educational scope',card_count:3,quiz_count:3,concepts:[{label:'The definition of a concept',covered_by:['note']}]}]}
+ assert.throws(()=>validateAnalysis(raw),/invalid concept/)
+ const value=validateAnalysis(raw,null,[{kind:'note'}]);assert.equal(value.topics[0].concepts[0].id,'topic-1:concept-1')
+ const duplicate=structuredClone(raw);duplicate.topics[0].concepts.push({...duplicate.topics[0].concepts[0]})
+ assert.throws(()=>validateAnalysis(duplicate,null,[{kind:'note'}]),/repeated/)
+})
+test('Paid generation accepts only finite supplied concept IDs and a reviewer must cover every remaining ID',()=>{
+ const concepts=[{id:'topic-1:concept-1',label:'Definition',topic_id:'topic-1'},{id:'topic-1:concept-2',label:'Application',topic_id:'topic-1'},{id:'topic-1:concept-3',label:'A distinction',topic_id:'topic-1'}]
+ const raw={flashcards:concepts.map((c,i)=>({front:'Distinct prompt '+i,back:'Source answer.',concept_id:c.id}))}
+ assert.equal(validateCoveredOutput(raw,'deck',{total:3},[],concepts).flashcards[0].coverage_key,concepts[0].id)
+ const bad=structuredClone(raw);bad.flashcards[0].concept_id='invented';assert.throws(()=>validateCoveredOutput(bad,'deck',{total:3},[],concepts),/invented/)
+ bad.flashcards[0].concept_id=bad.flashcards[1].concept_id;assert.throws(()=>validateCoveredOutput(bad,'deck',{total:3},[],concepts),/reused/)
+ assert.throws(()=>validateCoveredOutput({notes:'Notes',covered_concepts:[concepts[0].id]},'note',{},[],concepts),/all remaining/)
+ assert.equal(validateCoveredOutput({notes:'Complete explanatory notes',covered_concepts:concepts.map(c=>c.id)},'note',{},[],concepts).covered_concepts.length,3)
+ assert.match(coveragePrompt('deck',{total:3}),/Never invent or rename/)
+ assert.deepEqual(coverageSchema('deck',{total:3},concepts).properties.flashcards.items.properties.concept_id.enum,concepts.map(c=>c.id))
 })

@@ -2,7 +2,7 @@
 
 A Vue 3 study workspace, designed around your cream, sand, taupe, olive, and warm brown palette.
 
-**Already installed Synapse? Start with [GUIDED_GENERATION_SETUP.md](GUIDED_GENERATION_SETUP.md) for version 1.5.** Apply migration `008` and redeploy `generate-study` after the earlier setup. For GitHub/Vercel, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
+**Already installed Synapse? Start with [SEEDS_UPDATE.md](SEEDS_UPDATE.md) for version 1.6.** Apply migration `009` after earlier migrations, then redeploy `generate-study`. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
 
 ## Start here
 
@@ -23,8 +23,8 @@ On Windows, `start.bat` installs dependencies if needed and starts the same deve
 - Private PDF, DOCX, PPTX, legacy PPT, image, TXT, and Markdown uploads; 20 MB per file.
 - Comprehensive Gemini reviewers, explained terminology, tables and enumerations, worked mathematical solutions, flashcard decks, and mixed practice quizzes.
 - Fresh generated sets kept alongside earlier sets, with numbered navigation and editable titles.
-- Scanned topics and guided manual/topic generation; 5 reviewer, 5 quiz, and 10 flashcard attempts per source, enforced server-side.
-- Custom flashcard decks with no AI usage; continuous highlighting, sticky reviewer tools, and drawings above text/tables.
+- Scanned topics and guided manual/topic generation; 30 daily Seeds per account, resetting at midnight Philippine time, and finite per-format concept coverage.
+- Custom flashcard decks with individual question/answer editing and deletion, no AI usage; continuous highlighting, sticky reviewer tools, and drawings above text/tables.
 - Formatted note editing with a Word-style toolbar, tables, and equations; printable PDF, offline HTML study sheets, plain text, and optional Anki TSV exports.
 - Resizable/maximizable reviewer windows, colored highlights, written text annotations, and freehand drawing with pen thickness/color and stroke erasing. Annotations are saved per set and included in formatted exports.
 - Account deletion from profile settings, with a 48-hour sign-in cancellation period and storage-first server cleanup.
@@ -72,6 +72,8 @@ On Windows, `start.bat` installs dependencies if needed and starts the same deve
 | `src/components/AdminPanel.vue` | System care usage and reviewed cleanup controls |
 | `supabase/functions/admin-maintenance/` | Authenticated, server-authorized manual cleanup |
 | `ADMIN_AND_READINESS.md` | Exact 1.4 setup, admin role verification, free-plan references and live checks |
+| `SEEDS_UPDATE.md` | Current 1.6 upgrade: Seeds, concept exhaustion, custom card edits, invitations and zoom |
+| `supabase/migrations/009_seeds_and_custom_cards.sql` | Server-owned daily Seeds, coverage inventory, stable card IDs and authorized mutations |
 | `GUIDED_GENERATION_SETUP.md` | Exact 1.5 local replacement, Supabase migration/function, limits, and live checks |
 | `supabase/migrations/008_guided_generation.sql` | Source records, 20 MB cap, topic metadata, generation limits and retained duplicate history |
 | `tests/` | PostgreSQL policy tests, AI validation/auth tests, sample-state workflows |
@@ -103,7 +105,7 @@ Then paste the updated files from `supabase/dashboard/`.
 - PDF and images go to Gemini for multimodal reading/OCR. Office formats extract text in your browser; embedded diagrams and image-only slides require PDF export. Legacy PPT extraction covers text records; convert encrypted or unusual PPT files to PPTX/PDF.
 - Quiz explanations are generated with the materials. Short-answer grading compares normalized expected answers and accepted synonyms; it does not make a new semantic-grading API call per answer.
 - Raw uploads expire after 24 hours; the updated ten-minute job normally removes them on its next run. Each run handles up to 200 expired files; backlogs clear on later runs. Text assets, metadata, and progress are retained.
-- The app limits AI work to 20 claims per user per UTC day. Provider quotas/costs still apply. This cap includes failed provider attempts after a claim. Topic scans also count; completed scans are cached. In addition, a source permits 5 reviewer, 5 quiz, and 10 flashcard attempts in its space, including the first and started failures. Custom decks use no AI.
+- The app limits AI work to 30 daily Seeds per user, resetting at midnight Asia/Manila. A started generation uses 1 Seed; scanning and custom cards do not spend Seeds. Provider quotas/costs still apply. Source scans have separate frequency protection; completed scans are cached. Finite concept coverage blocks redundant generation before charging.
 - Initial fetches are bounded; use the Load more control to retrieve older folder materials and older uploads. Progress history shows the most recent 365 attempts/sessions, while dashboard totals and streaks are calculated over your full history. Search filters the loaded materials; load older pages to include them.
 - Calls use a peer mesh with no application-level participant cap. The 12 visible tiles per page are a layout/performance choice, not a call cap; off-page peers keep their audio. Large groups still face device/network and Realtime-plan limits. Use an SFU conferencing service for large production meetings. Connectivity is not guaranteed with STUN alone. Add TURN for restrictive networks; issue short-lived TURN credentials from a backend for public deployment rather than embedding permanent paid credentials.
 - Supabase Realtime authorization is cached for an established connection. The normal app refreshes/disconnects after membership changes, while database access is immediately enforced by RLS. Do not rely on an existing WebSocket being instantly revoked server-side.

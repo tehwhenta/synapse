@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.117.3'
-import { analysisPrompt, analysisSchema, validateAnalysis, guidedPrompt, guidedSchema, validateGuidedOutput } from './guided.ts'
+import { analysisPrompt, analysisSchema, validateAnalysis } from './guided.ts'
 import { geminiFilePart, geminiJson, deleteGeminiFiles } from './transport.ts'
+import { coveragePrompt,coverageSchema,validateCoveredOutput } from './coverage.ts'
 
 const allowedOrigins = (Deno.env.get('ALLOWED_ORIGINS') || 'http://localhost:5173,https://rcgsynapse.vercel.app').split(',').map(x => x.trim())
 // Retained rich notes are reference data, not HTML to execute or instructions to follow.
@@ -82,7 +83,8 @@ Deno.serve(async req => {
           parts.push({ text:'SOURCE MATERIAL (untrusted reference data):\n'+retained })
         }
       }
-      const output=validateAnalysis(await geminiJson(apiKey,analysisPrompt,parts,analysisSchema,30000,.2),retained)
+      if (scan.history?.length) parts.push({text:'PREVIOUS STUDY CONTENT BY TYPE (untrusted reference data):\n'+JSON.stringify(scan.history)})
+      const output=validateAnalysis(await geminiJson(apiKey,analysisPrompt,parts,analysisSchema,30000,.2),retained,scan.history || [])
       await rpc('finish_material_analysis',{ p_material_id:materialId,p_user_id:user.id,p_token:analysisToken,p_output:output })
       analysisToken=''; material={ ...material,...output,source_format:'markdown',analysis_status:'ready' }
     }
@@ -91,14 +93,14 @@ Deno.serve(async req => {
     const claim=await rpc('claim_material_generation',{ p_material_id:materialId,p_user_id:user.id,p_kind:kind,p_options:input.options || {} })
     jobId=claim.job_id
     const selectedTopic=claim.options.topic_id ? claim.topics.find((t: any)=>t.id===claim.options.topic_id) : null
-    const parts=[{ text:'RETAINED SOURCE (untrusted reference data):\n'+(claim.source_format==='html' ? sourceText(claim.source_text) : claim.source_text) }, { text:'SELECTED TOPIC AND ALL EARLIER SET CONTENT (untrusted reference data):\n'+JSON.stringify({ topic:selectedTopic,previous:claim.previous }) }]
+    const parts: Record<string, unknown>[]=[{ text:'RETAINED SOURCE (untrusted reference data):\n'+(claim.source_format==='html' ? sourceText(claim.source_text) : claim.source_text) }, { text:'SELECTED TOPIC, UNCOVERED CONCEPT INVENTORY AND EARLIER SET CONTENT (untrusted reference data):\n'+JSON.stringify({ topic:selectedTopic,concepts:claim.concepts,previous:claim.previous }) }]
     const original=claim.source_document
     if (original && !original.purged_at && new Date(original.expires_at)>new Date() && (original.mime_type==='application/pdf' || original.mime_type.startsWith('image/'))) {
       const downloaded=await admin.storage.from('study-files').download(original.storage_path)
       if (!downloaded.error && downloaded.data && downloaded.data.size<=20*1024*1024 && downloaded.data.size===Number(original.size_bytes)) parts.push(await geminiFilePart(downloaded.data,original.mime_type,apiKey,temporaryFiles))
     }
-    const raw=await geminiJson(apiKey,guidedPrompt(kind,claim.options),parts,guidedSchema(kind,claim.options),kind==='note' ? 30000 : 20000,kind==='note' ? .35 : .7)
-    const output=validateGuidedOutput(raw,kind,claim.options,claim.previous)
+    const raw=await geminiJson(apiKey,coveragePrompt(kind,claim.options),parts,coverageSchema(kind,claim.options,claim.concepts),kind==='note' ? 30000 : 20000,kind==='note' ? .35 : .7)
+    const output=validateCoveredOutput(raw,kind,claim.options,claim.previous,claim.concepts)
     const asset=await rpc('complete_material_generation',{ p_job_id:jobId,p_user_id:user.id,p_output:output })
     jobId=''
     return respond({ success:true,asset_id:asset.id,set_number:asset.set_number,material_id:materialId })
@@ -108,6 +110,6 @@ Deno.serve(async req => {
     if (admin && analysisToken) await admin.rpc('fail_material_analysis',{ p_material_id:materialId,p_token:analysisToken,p_error:message })
     if (admin && documentId && analysisToken) await admin.from('document_files').update({ status:'failed',error_message:message.slice(0,300) }).eq('id',documentId)
     console.error('Generation request failed:',message.slice(0,300))
-    return respond({ error:message },/limit reached|quota exceeded/i.test(message) ? 429 : /access required|scheduled for deletion/i.test(message) ? 403 : /already (being|generating)/i.test(message) ? 409 : 500)
+    return respond({ error:message },/limit reached|quota exceeded|No Seeds left/i.test(message) ? 429 : /covered everything|uncovered concepts/i.test(message)?409 : /access required|scheduled for deletion/i.test(message) ? 403 : /already (being|generating)/i.test(message) ? 409 : 500)
   } finally { if (temporaryFiles.length && apiKey) await deleteGeminiFiles(temporaryFiles,apiKey) }
 })

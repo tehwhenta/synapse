@@ -8,3 +8,12 @@ export function appOrigin(configured, origin, production = false) {
 }
 export const publicAppUrl = appOrigin(import.meta.env?.VITE_APP_URL, location.origin, import.meta.env?.PROD)
 export function invitationUrl(token) { return `${publicAppUrl}/?invite=${encodeURIComponent(token)}` }
+export function invitationToken(value) {
+  const text=String(value || '').trim()
+  if (/^[0-9a-f]{64}$/i.test(text)) return text.toLowerCase()
+  let url
+  try { url=new URL(text) } catch { throw new Error('Paste a full invitation link or its invitation code.') }
+  const token=url.searchParams.get('invite') || ''
+  if (!['https:','http:'].includes(url.protocol) || url.username || url.password || !/^[0-9a-f]{64}$/i.test(token)) throw new Error('This does not contain a valid Synapse invitation code.')
+  return token.toLowerCase()
+}

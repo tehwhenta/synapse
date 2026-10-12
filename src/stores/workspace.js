@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { cleanAnnotations } from '../lib/annotations'
-import { invitationUrl } from '../lib/appUrl'
+import { invitationUrl, invitationToken } from '../lib/appUrl'
 import { ref, computed } from 'vue'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from './auth'
@@ -15,6 +15,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const folders = ref([]); const assets = ref([]); const documents = ref([]); const members = ref([]); const activities = ref([]); const messages = ref([])
   const attempts = ref([]); const progress = ref([]); const sessions = ref([]); const selectedFolderId = ref(null); const loading = ref(false); const uploading = ref(false); const uploadLabel = ref(''); const error = ref('')
   const moreAssets = ref(false), moreDocuments = ref(false), personalStats = ref(null)
+  const seeds=ref(null),seedError=ref('');let seedRequest=0,seedFetched=0
+  async function refreshSeeds(force=false) {
+    if (!auth.user) return
+    if (!force && seeds.value && Date.now()-seedFetched<30000) return seeds.value
+    const id=auth.user.id,request=++seedRequest
+    if(auth.demo) {const next=new Date(Date.now()+8*3600000);next.setUTCHours(24,0,0,0);seeds.value={remaining:30,total:30,reset_at:new Date(next.getTime()-8*3600000).toISOString(),server_now:new Date().toISOString(),received_at:Date.now(),timezone:'Asia/Manila',demo:true};seedFetched=Date.now();return seeds.value}
+    try {const value=check(await supabase.rpc('my_seed_balance'));if(id===auth.user?.id && request===seedRequest){seeds.value={...value,received_at:Date.now()};seedFetched=Date.now();seedError.value=''};return value}
+    catch(e){if(id===auth.user?.id && request===seedRequest)seedError.value='Seeds are unavailable. Refresh or try again shortly.'}
+  }
   const documentColumns = 'id,folder_id,material_id,uploaded_by,name,storage_path,mime_type,size_bytes,status,error_message,processing_started_at,expires_at,purged_at,created_at'
   let changeChannel, folderChannel, reloadTimer, workspaceReloadTimer, loadVersion = 0, folderVersion = 0, subscriptionVersion = 0, workspaceSubscriptionVersion = 0
   const reloadTables = new Set()
@@ -47,7 +56,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
           for (const example of examples.assets.filter(a => a.set_number > 1)) if (data.folders.some(f => f.id === example.folder_id) && data.assets.some(a => a.id === example.series_id) && !data.assets.some(a => a.id === example.id)) data.assets.push(example)
         }
         for (const [key, state] of Object.entries({ folders, assets, documents, members, activities, messages, attempts, progress, sessions })) state.value = data[key] || []
-        assets.value = assets.value.map(a => ({ ...a, series_id:a.series_id || a.id, set_number:a.set_number || 1, content_format:a.content_format || 'markdown' }))
+        assets.value = assets.value.map(a => {const custom=a.is_custom===true || (a.kind==='deck' && !a.document_id && !a.material_id && /^[0-9a-f-]{36}$/i.test(a.id));return { ...a,is_custom:custom,series_id:a.series_id || a.id, set_number:a.set_number || 1, content_format:a.content_format || 'markdown',data:custom?a.data.map(c=>({...c,id:c.id || crypto.randomUUID()})):a.data }})
         persistDemo()
       } else {
         const result = check(await supabase.from('folders').select('*').order('created_at', { ascending: true }))
@@ -64,6 +73,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       }
       if (!folders.value.some(f => f.id === selectedFolderId.value)) selectedFolderId.value = folders.value[0]?.id || null
       if (!auth.demo) await loadFolder()
+      await refreshSeeds()
     } catch (err) { error.value = err.message || 'Could not load your workspace.' }
     finally { if (version === loadVersion) loading.value = false }
   }
@@ -168,11 +178,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     try {
       const response = await invokeGeneration({ action:'generate', material_id:materialId, kind, options })
       await loadFolder(); return response.asset_id
-    } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {}) }
+    } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {});await refreshSeeds(true);localStorage.setItem('synapse.seed-refresh',JSON.stringify({user_id:auth.user?.id,time:Date.now()})) }
   }
   async function materialInfo(id) { return check(await supabase.rpc('material_generation_info', { p_material_id:id })) }
   async function prepareGeneration(target) {
-    if (auth.demo) return { id:'sample-material',title:'Data Structures · sample material',status:'ready',usage:{note:0,deck:0,quiz:0},topics:[{id:'topic-1',title:'Trees and traversal',description:'Tree terminology, traversal methods, and connections.',card_count:12,quiz_count:12},{id:'topic-2',title:'Queues',description:'FIFO ordering and queue operations.',card_count:6,quiz_count:6},{id:'topic-3',title:'Time complexity',description:'How algorithm costs change with input size.',card_count:9,quiz_count:9}] }
+    if (auth.demo) return { id:'sample-material',title:'Data Structures · sample material',status:'ready',remaining:{note:27,deck:27,quiz:27},exhausted:false,topics:[{id:'topic-1',title:'Trees and traversal',description:'Tree terminology, traversal methods, and connections.',available_cards:12,available_quiz:12},{id:'topic-2',title:'Queues',description:'FIFO ordering and queue operations.',available_cards:6,available_quiz:6},{id:'topic-3',title:'Time complexity',description:'How algorithm costs change with input size.',available_cards:9,available_quiz:9}] }
     if (!canEdit.value) throw new Error('Editor access required.')
     if (target.material_id) { const info = await materialInfo(target.material_id); if (info.status === 'ready') return info }
     let text = null
@@ -195,13 +205,26 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
   async function createManualDeck(title, cards) {
     if (!canEdit.value) throw new Error('Editor access required.')
-    title = title.trim(); cards = cards.map(c => ({ front:c.front.trim(),back:c.back.trim() }))
+    title = title.trim(); cards = cards.map(c => ({ id:crypto.randomUUID(),front:c.front.trim(),back:c.back.trim() }))
     if (!title || title.length>150 || !cards.length || cards.length>100 || cards.some(c=>!c.front || !c.back || c.front.length>1000 || c.back.length>2000)) throw new Error('Enter a title and 1 to 100 cards, each with a question and answer.')
     if (new TextEncoder().encode(JSON.stringify(cards)).length>120000) throw new Error('This deck is too large. Split it into smaller decks.')
     let deck
-    if (auth.demo) { const id=crypto.randomUUID(); deck={ id,series_id:id,set_number:1,folder_id:selectedFolderId.value,kind:'deck',title,content:'',content_format:'markdown',data:cards,created_by:auth.user.id,created_at:new Date().toISOString() }; assets.value.unshift(deck); persistDemo() }
+    if (auth.demo) { const id=crypto.randomUUID(); deck={ id,series_id:id,set_number:1,is_custom:true,folder_id:selectedFolderId.value,kind:'deck',title,content:'',content_format:'markdown',data:cards,created_by:auth.user.id,created_at:new Date().toISOString() }; assets.value.unshift(deck); persistDemo() }
     else { deck=check(await supabase.rpc('create_manual_deck',{ p_folder_id:selectedFolderId.value,p_title:title,p_cards:cards })); await loadFolder() }
     return deck
+  }
+  async function updateCustomCard(asset,cardId,front=null,back=null,remove=false) {
+    if(!canEdit.value || !asset.is_custom || asset.kind!=='deck') throw new Error('Editor access to a custom deck is required.')
+    if(!remove && (!front?.trim() || !back?.trim() || front.length>1000 || back.length>2000)) throw new Error('Enter a question and answer within the card limits.')
+    let result
+    if(auth.demo) {
+      const row=assets.value.find(a=>a.id===asset.id),index=row?.data.findIndex(c=>c.id===cardId)
+      if(index==null || index<0) throw new Error('This card was already removed. Reopen the deck.')
+      if(remove && row.data.length===1) {await deleteAsset(row.id);progress.value=progress.value.filter(p=>p.asset_id!==row.id);result={deleted_deck:true}}
+      else {const data=[...row.data];if(remove)data.splice(index,1);else data[index]={id:cardId,front:front.trim(),back:back.trim()};row.data=data;progress.value=progress.value.filter(p=>p.asset_id!==row.id || p.card_index!==index).map(p=>remove&&p.asset_id===row.id&&p.card_index>index?{...p,card_index:p.card_index-1}:p);result={asset:{...row}}}
+      persistDemo()
+    } else {result=check(await supabase.rpc('update_custom_card',{p_asset_id:asset.id,p_card_id:cardId,p_front:front,p_back:back,p_delete:remove}));progress.value=check(await supabase.from('flashcard_progress').select('*').eq('user_id',auth.user.id));await loadFolder()}
+    return result
   }
   async function invokeGeneration(body) {
     const response = await supabase.functions.invoke('generate-study', { body })
@@ -263,14 +286,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!auth.demo) { check(await supabase.rpc('log_study_session', { p_folder_id: folderId, p_seconds: Math.min(seconds, 14400) })); await refreshStats() }
     sessions.value.unshift({ folder_id: folderId, duration_seconds: Math.min(seconds, 14400), created_at: new Date().toISOString() }); persistDemo()
   }
-  async function createInvitation(role, email) {
+  async function createInvitation(role) {
     if (auth.demo) throw new Error('Connect Supabase to invite your study group.')
-    const token = check(await supabase.rpc('create_invitation', { p_folder_id: selectedFolderId.value, p_role: role, p_email: email || null }))
+    const token = check(await supabase.rpc('create_invitation', { p_folder_id: selectedFolderId.value, p_role: role, p_email: null }))
     return invitationUrl(token)
   }
-  async function acceptInvitation() {
-    const token = sessionStorage.getItem('synapse.invite'); if (!token || auth.demo) return
+  async function acceptInvitation(value=null) {
+    if(value && auth.demo) throw new Error('Connect Supabase and sign in to join a shared space.')
+    const token = value ? invitationToken(value) : sessionStorage.getItem('synapse.invite'); if (!token || auth.demo) return
     const id = check(await supabase.rpc('accept_invitation', { p_token: token })); sessionStorage.removeItem('synapse.invite'); selectedFolderId.value = id; await load()
+    return id
   }
   async function updateMember(userId, role) { check(await supabase.rpc('update_member', { p_folder_id: selectedFolderId.value, p_user_id: userId, p_role: role })); await loadFolder() }
   async function sendMessage(body) {
@@ -335,10 +360,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await subscribeFolder()
   }
   async function dispose() {
+    ++seedRequest;seeds.value=null;seedError.value='';seedFetched=0
     ++loadVersion; ++folderVersion; ++subscriptionVersion; ++workspaceSubscriptionVersion; clearTimeout(reloadTimer); reloadTimer = null; clearTimeout(workspaceReloadTimer); reloadTables.clear()
     const channels = [changeChannel,folderChannel]; changeChannel = null; folderChannel = null
     folders.value = []; assets.value = []; selectedFolderId.value = null; members.value = []; messages.value = []; attempts.value = []; sessions.value = []; progress.value = []; documents.value = []; activities.value = []; moreAssets.value = false; moreDocuments.value = false; personalStats.value = null; loading.value = false
     await Promise.all(channels.filter(Boolean).map(channel => supabase?.removeChannel(channel)))
   }
-  return { folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, generateSet, materialInfo, prepareGeneration, createManualDeck, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
+  return { seeds,seedError,refreshSeeds,updateCustomCard,folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, generateSet, materialInfo, prepareGeneration, createManualDeck, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
 })

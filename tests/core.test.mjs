@@ -86,6 +86,17 @@ test('Supported formats and size caps; Anki uses a TSV row per card',()=>{
   assert.throws(()=>validateFile({name:'book.pdf',size:20971521}),/20 MB/)
   assert.equal(ankiTsv([{front:'Hello\nworld',back:'Yes\tindeed'}]),'Hello world\tYes indeed')
 })
+test('Joining extracts a valid invitation token without navigating the supplied URL',async()=>{
+ const previousLocation=globalThis.location;globalThis.location={origin:'http://localhost:5173'}
+ try {
+ const {invitationToken}=await importTs('../src/lib/appUrl.js')
+ const token='ab'.repeat(32)
+ assert.equal(invitationToken(' '+token.toUpperCase()+' '),token)
+ assert.equal(invitationToken('https://rcgsynapse.vercel.app/?invite='+token),token)
+ assert.throws(()=>invitationToken('javascript:alert(1)'),/valid Synapse|full invitation/)
+ assert.throws(()=>invitationToken('https://elsewhere.example/?invite=nope'),/valid Synapse/)
+ }finally{if(previousLocation===undefined)delete globalThis.location;else globalThis.location=previousLocation}
+})
 test('Legacy PPT extracts text atoms and rejects invalid record boundaries safely',()=>{
   const text=Buffer.from('A binary tree is a connected graph.','utf16le')
   const atom=Buffer.alloc(8+text.length);atom.writeUInt16LE(0,0);atom.writeUInt16LE(4000,2);atom.writeUInt32LE(text.length,4);text.copy(atom,8)
@@ -98,7 +109,7 @@ test('Edge handlers authenticate, scan private sources once, and save only exact
   const id='11111111-1111-4111-8111-111111111111'
   let handler,claims=0,persisted=null,failed=0,storageReads=0,activeAccount=true,ready=false,hash=null
   const sourceText='A source note about a queue.'
-  const analysis={title:'Queues',source_text:sourceText,topics:[{title:'FIFO operations',description:'Queue insertion and removal',card_count:3,quiz_count:6}]}
+  const analysis={title:'Queues',source_text:sourceText,topics:[{title:'FIFO operations',description:'Queue insertion and removal',card_count:3,quiz_count:6,concepts:[{label:'Queue insertion',covered_by:[]},{label:'Queue removal',covered_by:[]},{label:'FIFO ordering',covered_by:[]}]}]}
   const material=()=>({id,source_hash:hash,source_format:'markdown',source_text:ready?sourceText:'',analysis_status:ready?'ready':'unscanned'})
   const mock={auth:{getUser:async(token)=>token==='real-session'?{data:{user:{id:'user'}},error:null}:{data:{user:null},error:{message:'invalid'}}},rpc:async(name,args)=>{
     if(name==='account_is_active')return {data:activeAccount,error:null}
@@ -106,7 +117,7 @@ test('Edge handlers authenticate, scan private sources once, and save only exact
     if(name==='bind_generation_source'){assert.match(args.p_hash,/^[0-9a-f]{64}$/);hash=args.p_hash;return {data:material(),error:null}}
     if(name==='claim_material_analysis')return {data:{cached:ready,token:'scan',material:material()},error:null}
     if(name==='finish_material_analysis'){ready=true;assert.equal(args.p_output.topics[0].id,'topic-1');return {data:null,error:null}}
-    if(name==='claim_material_generation'){claims++;return {data:{job_id:'guided-job',kind:'deck',source_text:sourceText,source_format:'markdown',previous:[{prompt:'Define FIFO',coverage_key:'fifo:definition'}],topics:[],options:{workflow:'topic',topic_id:'topic-1',topic_title:'FIFO operations',total:3}},error:null}}
+    if(name==='claim_material_generation'){claims++;return {data:{job_id:'guided-job',kind:'deck',source_text:sourceText,source_format:'markdown',previous:[{prompt:'Define FIFO',coverage_key:'fifo:definition'}],topics:[],concepts:[{id:'topic-1:concept-1',label:'Insertion',topic_id:'topic-1'},{id:'topic-1:concept-2',label:'Removal',topic_id:'topic-1'},{id:'topic-1:concept-3',label:'Order',topic_id:'topic-1'}],options:{workflow:'topic',topic_id:'topic-1',topic_title:'FIFO operations',total:3}},error:null}}
     if(name==='fail_material_generation'){failed++;return {data:null,error:null}}
     if(name==='complete_material_generation'){persisted=args;return {data:{id:'new-set',set_number:2},error:null}}
     return {data:null,error:null}
@@ -129,11 +140,11 @@ test('Edge handlers authenticate, scan private sources once, and save only exact
     const analyzed=await handler(req('Bearer real-session',{action:'analyze',document_id:id}));assert.equal(analyzed.status,200);assert.equal((await analyzed.json()).material_id,id);assert.equal(storageReads,1);assert.equal(claims,0)
     globalThis.fetch=async()=>{throw new Error('Cached analysis must never call Gemini')}
     assert.equal((await handler(req('Bearer real-session',{action:'analyze',document_id:id}))).status,200);assert.equal(storageReads,1)
-    const cards={flashcards:[{front:'Which operation inserts at the rear?',back:'Enqueue.',coverage_key:'queue:insertion'},{front:'What does dequeue remove?',back:'The oldest queued item.',coverage_key:'queue:removal'},{front:'How do queues preserve arrival order?',back:'Items are removed from the front.',coverage_key:'queue:arrival_order'}]}
+    const cards={flashcards:[{front:'Which operation inserts at the rear?',back:'Enqueue.',concept_id:'topic-1:concept-1',coverage_key:'topic-1:concept-1'},{front:'What does dequeue remove?',back:'The oldest queued item.',concept_id:'topic-1:concept-2',coverage_key:'topic-1:concept-2'},{front:'How do queues preserve arrival order?',back:'Items are removed from the front.',concept_id:'topic-1:concept-3',coverage_key:'topic-1:concept-3'}]}
     globalThis.fetch=async(_url,options)=>{const payload=JSON.parse(options.body);assert.deepEqual(Object.keys(payload.generationConfig.responseJsonSchema.properties),['flashcards']);assert.match(payload.systemInstruction.parts[0].text,/EXACTLY 3 flashcards/);assert.match(payload.contents[0].parts[1].text,/fifo:definition/);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(cards)}]}}]})}
     const generated=await handler(req('Bearer real-session',{action:'generate',material_id:id,kind:'deck',options:{workflow:'topic',topic_id:'topic-1'}}))
     assert.equal(generated.status,200);assert.equal((await generated.json()).asset_id,'new-set');assert.equal(claims,1);assert.deepEqual(persisted.p_output,cards)
-    const repeated=structuredClone(cards);repeated.flashcards[0].coverage_key='fifo:definition'
+    const repeated=structuredClone(cards);repeated.flashcards[0].front='Define FIFO'
     globalThis.fetch=async()=>Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(repeated)}]}}]})
     assert.equal((await handler(req('Bearer real-session',{action:'generate',material_id:id,kind:'deck',options:{workflow:'topic',topic_id:'topic-1'}}))).status,500)
     assert.equal(failed,1);assert.deepEqual(persisted.p_output,cards)

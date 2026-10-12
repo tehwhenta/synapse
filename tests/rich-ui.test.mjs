@@ -151,7 +151,7 @@ test('Study viewer navigates retained sets, edits titles, and opens generation c
   assert.equal(workspace.assets.find(a=>a.id==='deck-trees-2').title,'My own practice title')
   assert.equal(workspace.assets.find(a=>a.id==='deck-trees').title,first.title)
   assert.doesNotMatch(wrapper.text(),/JSON/)
-  await wrapper.findAll('button').find(b=>b.text()==='Generate new set').trigger('click'); await flushPromises()
+  await wrapper.findAll('button').find(b=>b.text()==='Generate').trigger('click'); await flushPromises()
   assert.equal(wrapper.emitted('generate')[0][0].id,'deck-trees-2')
   assert.equal(wrapper.findAll('.set-numbers button').length,2); assert.equal(wrapper.find('.set-numbers .active').text(),'2')
   await wrapper.find('[aria-label="Open set 1"]').trigger('click'); await flushPromises()
@@ -193,7 +193,7 @@ test('Expired-source refresh warns before spending a generation and offers re-up
   const wrapper=mount(runtime.StudyViewer,{props:{asset:first},global:{stubs:{Teleport:true}},attachTo:document.body})
   await flushPromises()
   assert.match(wrapper.find('.source-notice').text(),/Original file expired/)
-  await wrapper.findAll('button').find(b=>b.text()==='Generate new set').trigger('click'); await flushPromises()
+  await wrapper.findAll('button').find(b=>b.text()==='Generate').trigger('click'); await flushPromises()
   assert.equal(generated,0); assert.equal(wrapper.find('.refresh-warning').exists(),true)
   await wrapper.findAll('button').find(b=>b.text()==='Upload original').trigger('click')
   assert.equal(wrapper.emitted('reupload').length,1)
@@ -204,8 +204,8 @@ test('Expired-source refresh warns before spending a generation and offers re-up
 
 test('Generation dialog checks exact manual quantities, shows balanced topic counts, and submits the selected workflow',async()=>{
   runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
-  const info={id:'material',title:'Queues',status:'ready',usage:{note:0,deck:0,quiz:0},topics:[{id:'topic-1',title:'Operations',description:'Queue methods',card_count:4,quiz_count:6}]}
-  workspace.prepareGeneration=async()=>info;workspace.materialInfo=async()=>({...info,usage:{...info.usage,quiz:1}})
+  const info={id:'material',title:'Queues',status:'ready',remaining:{note:30,deck:30,quiz:30},exhausted:false,topics:[{id:'topic-1',title:'Operations',description:'Queue methods',available_cards:4,available_quiz:6}]}
+  workspace.refreshSeeds=async()=>{workspace.seeds={remaining:30,total:30};return workspace.seeds};workspace.prepareGeneration=async()=>info;workspace.materialInfo=async()=>({...info,remaining:{...info.remaining,quiz:20}})
   let request
   workspace.generateSet=async(id,kind,options)=>{request={id,kind,options};return 'new-quiz'}
   workspace.readAsset=async()=>({id:'new-quiz',kind:'quiz',title:'Practice'})
@@ -289,4 +289,58 @@ test('Spaces scroll independently after three entries, accumulate smooth wheel m
     await wrapper.find('.add-folder').trigger('click');assert.equal(wrapper.emitted('create').length,1)
     assert.equal(wrapper.findAll('.folder-button').length,5)
   } finally {window.matchMedia=previousMedia;wrapper.unmount()}
+})
+test('Custom deck viewer hides generation controls, edits questions/answers, and removes individual cards',async()=>{
+ runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
+ const deck=await workspace.createManualDeck('My custom deck',[{front:'First question?',back:'First answer.'},{front:'Second question?',back:'Second answer.'}])
+ const wrapper=mount(runtime.StudyViewer,{props:{asset:deck},global:{stubs:{Teleport:true}},attachTo:document.body})
+ try{
+  await flushPromises()
+  assert.equal(wrapper.findAll('button').some(b=>b.text()==='Generate'||b.text()==='Create custom flashcards'),false)
+  await wrapper.findAll('button').find(b=>b.text()==='Edit card').trigger('click')
+  await wrapper.find('[aria-label="Edit custom question"]').setValue('A revised question?')
+  await wrapper.find('[aria-label="Edit custom answer"]').setValue('A revised answer.')
+  await wrapper.find('.custom-card-editor').trigger('submit');await flushPromises()
+  assert.equal(workspace.assets.find(a=>a.id===deck.id).data[0].front,'A revised question?')
+  await wrapper.findAll('button').find(b=>b.text()==='Delete card').trigger('click')
+  await wrapper.findAll('button').find(b=>b.text()==='Delete this card').trigger('click');await flushPromises()
+  assert.equal(workspace.assets.find(a=>a.id===deck.id).data.length,1)
+  assert.match(wrapper.find('.flashcard-front').text(),/Second question/)
+  await wrapper.findAll('button').find(b=>b.text()==='Delete card').trigger('click')
+  assert.match(wrapper.find('.custom-card-editor').text(),/last card/)
+  await wrapper.findAll('button').find(b=>b.text()==='Delete this card').trigger('click');await flushPromises()
+  assert.equal(workspace.assets.some(a=>a.id===deck.id),false);assert.equal(wrapper.emitted('close').length,1)
+ }finally{wrapper.unmount();await workspace.dispose()}
+})
+test('Invitation dialog provides a paste box without email input, including for users with no spaces',async()=>{
+ runtime.setActivePinia(runtime.createPinia())
+ const wrapper=mount(runtime.App,{global:{stubs:{Teleport:true,StudyRoom:true,StudyViewer:true,RichEditor:true,AdminPanel:true,FocusTimer:true,Avatar:true}},attachTo:document.body})
+ try{
+  await flushPromises();await flushPromises()
+  const workspace=runtime.useWorkspaceStore();let supplied=''
+  workspace.acceptInvitation=async value=>{supplied=value;return 'joined-space'}
+  workspace.selectedFolderId=null
+  await flushPromises()
+  const join=wrapper.findAll('button').find(b=>b.text()==='Join a space')
+  assert.equal(join.attributes('disabled'),undefined);await join.trigger('click');await flushPromises()
+  assert.equal(wrapper.find('[aria-label="Invitation link or code"]').exists(),true)
+  assert.equal(wrapper.find('.modal input[type="email"]').exists(),false)
+  await wrapper.find('[aria-label="Invitation link or code"]').setValue('https://rcgsynapse.vercel.app/?invite='+ 'a'.repeat(64))
+  await wrapper.find('.join-space-form').trigger('submit');await flushPromises()
+  assert.equal(supplied,'https://rcgsynapse.vercel.app/?invite='+ 'a'.repeat(64))
+ }finally{wrapper.unmount();await flushPromises()}
+})
+test('Seed and concept states disable generation without exposing attempt counters or a generation icon',async()=>{
+ runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load();auth.demo=false
+ const info={id:'material',title:'Course',status:'ready',remaining:{note:0,deck:4,quiz:3},topics:[{id:'topic-1',title:'Topic',description:'Source topic',available_cards:4,available_quiz:3}],exhausted:false}
+ workspace.prepareGeneration=async()=>info;workspace.refreshSeeds=async()=>{workspace.seeds={remaining:30,total:30};return workspace.seeds}
+ const wrapper=mount(runtime.GenerationDialog,{props:{target:{id:'source'}},global:{stubs:{Teleport:true}},attachTo:document.body})
+ try{
+  await flushPromises();assert.match(wrapper.text(),/covered everything/);assert.doesNotMatch(wrapper.text(),/attempts/)
+  assert.equal(wrapper.find('.button.primary').text(),'Generate');assert.equal(wrapper.find('.button.primary svg').exists(),false);assert.equal(wrapper.find('.button.primary').attributes('disabled'),'')
+  await wrapper.findAll('.generation-kinds button')[1].trigger('click');await flushPromises()
+  assert.equal(wrapper.find('.button.primary').attributes('disabled'),undefined)
+  workspace.seeds={remaining:0,total:30};await flushPromises()
+  assert.match(wrapper.text(),/No Seeds left/);assert.equal(wrapper.find('.button.primary').attributes('disabled'),'')
+ }finally{wrapper.unmount();await workspace.dispose()}
 })

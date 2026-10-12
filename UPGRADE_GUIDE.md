@@ -1,4 +1,8 @@
-# Upgrade your existing Synapse project to 1.5
+# Upgrade your existing Synapse project to 1.6
+
+## 1.5 → 1.6: Seeds and custom-card management
+
+Follow **[SEEDS_UPDATE.md](SEEDS_UPDATE.md)** for the current upgrade. Run migration `009` once after prior migrations and replace the complete Dashboard `generate-study` function. The previous generation counters are superseded by daily Seeds and concept coverage. The sections below describe earlier releases; do not rerun successful older migrations.
 
 ## 1.4 → 1.5: guided generation and reviewer tools
 

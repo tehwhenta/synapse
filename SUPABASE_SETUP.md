@@ -1,6 +1,6 @@
 # Synapse: exact Supabase setup
 
-**Already set up Synapse? Follow [GUIDED_GENERATION_SETUP.md](GUIDED_GENERATION_SETUP.md) for version 1.5.** For `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful migrations.
+**Already set up Synapse? Follow [SEEDS_UPDATE.md](SEEDS_UPDATE.md) for version 1.6.** For `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful migrations.
 
 Complete these steps once for your new project. Use the Dashboard route below; the CLI alternative at the end does the same deployments. Do not use both deployment routes unless updating a function.
 
@@ -23,7 +23,7 @@ Complete these steps once for your new project. Use the Dashboard route below; t
 5. Confirm the query succeeds before proceeding.
 6. Open another new query, paste the entire contents of `supabase/migrations/003_study_refinements.sql`, and click **Run** once. This adds the current saved-set, photo, and space-deletion features.
 7. In another new query, run `supabase/migrations/004_reviewer_accounts.sql` once. It adds reviewer drawings and the 48-hour account deletion lifecycle. Then run `006_system_maintenance.sql` once. After the cleanup job's original Vault setup below, use `005_cleanup_interval.sql` to update it to every ten minutes. Follow `ADMIN_AND_READINESS.md` to create the admin function and bind the confirmed admin account.
-8. Run `007_admin_email_type.sql`, then `008_guided_generation.sql`, each as a separate complete query. The final migration adds guided topic generation, persistent attempt limits, and the 20 MB study-file cap.
+8. Run `007_admin_email_type.sql`, then `008_guided_generation.sql`, each as a separate complete query. Then run `009_seeds_and_custom_cards.sql` once, before deploying the generation function. The latest migration replaces those counters with daily Seeds and finite concept coverage; study files retain the 20 MB cap.
 
 Run it once in a new project. It uses a transaction: a failed run rolls back the whole script. If it succeeded, do not run it again. It does not wipe existing tables to make re-runs appear successful.
 
