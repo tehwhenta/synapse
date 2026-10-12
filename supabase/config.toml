@@ -1,0 +1,24 @@
+project_id = "synapse"
+
+# These template settings apply to local CLI Auth, not to a hosted Dashboard project.
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+max_frequency = "1m"
+otp_expiry = 600
+
+[auth.email.template.confirmation]
+subject = "Your Synapse email confirmation code"
+content_path = "./supabase/templates/confirm-signup.html"
+
+[auth.email.template.recovery]
+subject = "Your Synapse password reset code"
+content_path = "./supabase/templates/reset-password.html"
+
+# Each handler authenticates explicitly. This also works with asymmetric signing keys.
+[functions.generate-study]
+verify_jwt = false
+
+# Only the shared, server-side CRON_SECRET is accepted by this handler.
+[functions.cleanup-files]
+verify_jwt = false
