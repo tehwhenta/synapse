@@ -1,12 +1,12 @@
-# Current update: Synapse 1.7
+# Current update: Synapse 1.7.1
 
-Use [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md) for automatic upload generation, one-click new sets, and removal of Seeds/topic choices. Apply migration 010 after 009 and deploy the latest generate-study Dashboard file.
+Use [GENERATION_RELIABILITY_SETUP.md](GENERATION_RELIABILITY_SETUP.md) to fix alternating generation failures. Run migration 011 after 010 and deploy the latest combined generate-study Dashboard file. For the original automatic upload workflow and removal of Seeds/topic choices, use [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md).
 
 # Upgrade your existing Synapse project to 1.6
 
 ## 1.5 → 1.6: Seeds and custom-card management
 
-Follow **[SEEDS_UPDATE.md](SEEDS_UPDATE.md)** for the current upgrade. Run migration `009` once after prior migrations and replace the complete Dashboard `generate-study` function. The previous generation counters are superseded by daily Seeds and concept coverage. The sections below describe earlier releases; do not rerun successful older migrations.
+This is a historical release. **[SEEDS_UPDATE.md](SEEDS_UPDATE.md)** documents migration 009 and custom-card management. Migration 010 retires guided generation and currency; migration 011 adds automatic draft recovery. The sections below describe earlier releases; do not rerun successful older migrations.
 
 ## 1.4 → 1.5: guided generation and reviewer tools
 

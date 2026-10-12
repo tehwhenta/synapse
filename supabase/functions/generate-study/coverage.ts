@@ -5,9 +5,12 @@ export function coveragePrompt(kind:string,options:GenerationOptions) {
  return guidedPrompt(kind,options)+`\n\nThe server supplies the finite UNCOVERED CONCEPT INVENTORY in the user data. Never invent or rename its IDs. Each flashcard/question must test one distinct listed concept and return its exact concept_id; choose exactly the requested number of distinct IDs. Use concept_id as coverage_key. Previous concept coverage is already excluded, even if an earlier saved set was deleted. A reviewer must thoroughly explain ALL the listed uncovered concepts, preserving needed context and source terminology, and return covered_concepts containing every supplied ID exactly once. Do not merely list IDs without teaching those concepts. Return no fabricated or padded content. Coverage is tracked separately for reviewer, flashcard, and quiz formats. Do not claim broader coverage than the source permits.`
 }
 export function coverageSchema(kind:string,options:GenerationOptions,concepts:SourceConcept[]) {
- const schema:any=guidedSchema(kind,options),ids=concepts.map(c=>c.id)
- if (kind==='note') {schema.required.push('covered_concepts');schema.properties.covered_concepts={type:'array',items:{type:'string',enum:ids}}}
- else {const item=schema.properties[kind==='deck'?'flashcards':'quiz'].items;item.required.push('concept_id');item.properties.concept_id={type:'string',enum:ids}}
+ const schema:any=guidedSchema(kind,options)
+ // A material can contain 500 concepts. Keep these IDs in the reference inventory,
+ // not in a large constrained enum; validateCoveredOutput enforces them before saving.
+ const conceptId={type:'string',description:'Copy an exact concept ID from the supplied uncovered concept inventory.'}
+ if (kind==='note') {schema.required.push('covered_concepts');schema.properties.covered_concepts={type:'array',items:conceptId}}
+ else {const item=schema.properties[kind==='deck'?'flashcards':'quiz'].items;item.required.push('concept_id');item.properties.concept_id=conceptId}
  return schema
 }
 export function validateCoveredOutput(raw:any,kind:string,options:GenerationOptions,previous:PreviousItem[],concepts:SourceConcept[]) {

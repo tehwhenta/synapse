@@ -2,6 +2,8 @@ import test, { before, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { PGlite } from '@electric-sql/pglite'
+import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
 const db=new PGlite(), ids=Array.from({length:3},()=>crypto.randomUUID())
 async function user(i,sql,args=[]) { await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub','${ids[i]}',false)`); try { return await db.query(sql,args) } finally { await db.exec('reset role') } }
 async function backend(sql,args=[]) { await db.exec('set role service_role'); try { return await db.query(sql,args) } finally { await db.exec('reset role') } }
@@ -29,7 +31,7 @@ before(async()=>{
     grant usage on schema auth,storage,realtime to anon,authenticated,service_role;
     grant select,insert,delete on storage.objects to authenticated; grant select,insert on realtime.messages to authenticated;
     create publication supabase_realtime;`)
-  for(const file of ['001_synapse.sql','003_study_refinements.sql','004_reviewer_accounts.sql','006_system_maintenance.sql','007_admin_email_type.sql','008_guided_generation.sql','009_seeds_and_custom_cards.sql','010_automatic_study.sql']) await db.exec(readFileSync(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'))
+  for(const file of ['001_synapse.sql','003_study_refinements.sql','004_reviewer_accounts.sql','006_system_maintenance.sql','007_admin_email_type.sql','008_guided_generation.sql','009_seeds_and_custom_cards.sql','010_automatic_study.sql','011_generation_reliability.sql']) await db.exec(readFileSync(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'))
   for(const [i,id] of ids.entries()) await db.query('insert into auth.users(id,email,email_confirmed_at,last_sign_in_at) values($1,$2,now(),now())',[id,`guided${i}@example.com`])
 })
 beforeEach(async()=>{await db.exec('delete from private.ai_usage;delete from private.seed_usage')})
@@ -86,4 +88,129 @@ test('Simultaneous work is denied, malformed answers cannot be saved, and custom
  const custom=(await user(0,'select to_jsonb(public.create_manual_deck($1,$2,$3)) as deck',[m.folder.id,'My cards',JSON.stringify([{front:'My own question',back:'My own answer'}])])).rows[0].deck
  const result=(await user(0,'select public.update_custom_card($1,$2,$3,$4,false) as value',[custom.id,custom.data[0].id,'Edited question','Edited answer'])).rows[0].value
  assert.equal(result.asset.data[0].front,'Edited question')
+})
+
+test('The reliability migration supports six consecutive numbered sets per format and valid small sets',async()=>{
+ const m=await material()
+ for(const kind of ['note','deck','quiz']){
+  const variants=[]
+  for(let n=1;n<=6;n++){
+   const claim=await rpc('claim_auto_generation',[m.id,ids[0],kind,n===1])
+   assert.equal(claim.options.set_number,n);variants.push(claim.options.variant)
+   const output=kind==='note'?{notes:'# Treatment '+n+'\nDetailed source-supported explanation '+n+'.'}:kind==='deck'?cards('treatment-'+n,1):{quiz:[{type:'short_answer',question:'Distinct reasoning task '+n,options:[],answer:'Enqueue',accepted_answers:[],explanation:'It inserts an item at the rear.',coverage_key:'queue:reasoning_'+n}]}
+   const result=await rpc('complete_auto_generation',[claim.job_id,ids[0],JSON.stringify(output)])
+   assert.equal(result.set_number,n)
+   assert.equal(result.generation_options.set_number,n)
+  }
+  assert.equal(new Set(variants).size,6)
+ }
+ assert.equal((await db.query('select count(*)::int n from public.study_assets where material_id=$1',[m.id])).rows[0].n,18)
+ assert.equal((await db.query('select status from public.document_files where id=$1',[m.doc])).rows[0].status,'ready')
+})
+
+test('Rejected draft transactions roll back completely and the same generation claim can save a corrected draft',async()=>{
+ const m=await material(),first=await save(m,'deck',cards('original',1))
+ const job=await rpc('claim_auto_generation',[m.id,ids[0],'deck',false])
+ const bad=cards('replacement',2);bad.flashcards[1]=cards('original',1).flashcards[0]
+ await assert.rejects(rpc('complete_auto_generation',[job.job_id,ids[0],JSON.stringify(bad)]),/repeated/)
+ assert.equal((await db.query('select count(*)::int n from private.material_history where material_id=$1',[m.id])).rows[0].n,1)
+ assert.equal((await db.query('select status from private.material_jobs where id=$1',[job.job_id])).rows[0].status,'processing')
+ const corrected=await rpc('complete_auto_generation',[job.job_id,ids[0],JSON.stringify(cards('corrected',2))])
+ assert.equal(corrected.set_number,2);assert.equal(corrected.series_id,first.series_id)
+ assert.equal((await db.query('select count(*)::int n from private.material_history where material_id=$1',[m.id])).rows[0].n,3)
+ await assert.rejects(rpc('complete_auto_generation',[job.job_id,ids[0],JSON.stringify(cards('again',1))]),/missing or expired/)
+})
+
+test('Full deployed handler: first upload plus five consecutive Generate actions for all formats recover alternating AI defects',async()=>{
+ const m=await material(),old={Deno:globalThis.Deno,fetch:globalThis.fetch,__synapseReliableClient:globalThis.__synapseReliableClient}
+ const source='A queue preserves FIFO ordering. Enqueue adds at the rear, dequeue removes at the front, and peek reads the front without removal. A stack preserves LIFO ordering: push adds at the top and pop removes the top. A bounded container checks capacity before insertion and emptiness before removal. Insertion sort grows a sorted prefix by inserting the next element into its correct position. It is stable when equal items keep their relative order.'
+ const pdf=new Blob(['%PDF-1.7 mock provider input'],{type:'application/pdf'})
+ await db.query("update public.study_materials set source_text='',source_hash=null where id=$1",[m.id])
+ await db.query("update public.document_files set mime_type='application/pdf',size_bytes=$2,status='processing' where id=$1",[m.doc,pdf.size])
+ let handler,current=null,scanDrafts=0,claimCount=0,draftCount=0,downloads=0,permanent=false
+ const outputs={note:[],deck:[],quiz:[]},callCounts=[],env={SUPABASE_URL:'https://mock.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'mock-server-only',GEMINI_API_KEY:'mock-only',ALLOWED_ORIGINS:'http://localhost:5173'}
+ const rows=[
+  [ ['What is FIFO ordering?','The earliest remaining arrival is removed first.','queue:fifo_definition'],['What does a stack pop remove?','The top item.','stack:pop_definition'],['What is a sorted prefix?','The leading part of the array already in sorted order.','sort:prefix_definition'] ],
+  [ ['Enqueue A then B, remove once and enqueue C. Which item is now at the front?','B remains the front after A is removed.','queue:trace_interleaved_operations'],['Push X then Y and pop once. Which item becomes the top?','X becomes the top after Y is removed.','stack:trace_remaining_top'],['Insert 2 into the sorted prefix [1,4]. What is the result?','[1,2,4].','sort:insert_into_prefix'] ],
+  [ ['Compare the removal order of a queue and stack after inserting A then B.','The queue removes A before B; the stack removes B before A.','queue:compare_queue_stack_order'],['How does peek differ from pop in its effect on a stack?','Peek reads the top while pop removes it.','stack:compare_peek_pop'],['How do stability and sorted order differ?','Sorted order arranges values; stability also preserves the relative order of equal values.','sort:compare_stability_order'] ],
+  [ ['A student dequeues B first after enqueueing A then B. What rule did the student violate?','FIFO requires A to leave first.','queue:diagnose_wrong_front'],['Someone removes the bottom item using pop. What is the error?','Pop must remove the accessible top item.','stack:diagnose_bottom_removal'],['A sort reverses two equal items. Which property is lost?','Stability.','sort:diagnose_equal_item_reversal'] ],
+  [ ['Why does adding C at the rear leave A at the front of a queue containing A then B?','Rear insertion preserves the arrival order of the remaining earlier items.','queue:reason_rear_insertion_preserves_front'],['When undoing the most recent action first, why is LIFO useful?','It makes the latest stored action the first available for removal.','stack:apply_lifo_undo'],['Why would preserving the arrival order of equal records require a stable sort?','Stability retains the original relative order of equal values.','sort:apply_stability_equal_records'] ],
+  [ ['Explain how rear insertion and front removal together establish FIFO.','New arrivals follow existing items; removal always selects the earliest remaining item.','queue:justify_two_operation_invariant'],['Which boundary must a pop check, and why?','Emptiness: a removal requires an existing top item.','stack:justify_pop_empty_check'],['Why does inserting into the sorted prefix grow that prefix by one element?','The next element is placed correctly among the previously sorted elements.','sort:justify_prefix_growth'] ],
+ ]
+ const noteTreatments=[
+  'Foundations: define each operation and compare arrival order with removal order. Queue operations act at opposite ends; stack operations act at the same accessible top. Insertion sort extends the sorted prefix rather than reordering an unrelated part of the sequence.',
+  'Worked applications: enqueue A then B, remove A, then enqueue C. The queue now has B followed by C. Push X then Y into a stack and pop Y; X is left at the top. Insert 2 into [1,4] to obtain [1,2,4], extending the sorted prefix by one.',
+  'Connections: both queue and stack support insertion and removal, but their accessible positions produce different orderings. Peek differs from removal because it leaves the number of stored items unchanged. Sorting by value and preserving equal-item order answer different questions.',
+  'Error diagnosis: taking B before A from a queue reverses the required arrival order. Removing the bottom instead of the top violates the stack operation. Reversing equal records destroys sorting stability even when the resulting values are still ordered.',
+  'Transfer: a waiting-line illustration uses FIFO to keep earlier arrivals accessible first, while an undo illustration uses LIFO to reach the latest stored action. Stable sorting is useful when equal records must retain their previous relative order; no additional sorting rule is needed.',
+  'Justification and synthesis: rear insertion leaves earlier queue arrivals in front, so front removal maintains FIFO. Stack removal instead selects the latest top. The empty check answers whether removal is possible; the capacity check answers whether another insertion is possible. Correct insertion into the sorted prefix preserves its order.',
+ ]
+ const client={auth:{getUser:async token=>({data:{user:token==='valid'?{id:ids[0]}:null},error:null})},storage:{from:()=>({download:async()=>{downloads++;return {data:pdf,error:null}}})},from:table=>{
+  let id,values
+  const query={select(){return this},eq(key,value){if(key==='id')id=value;return this},update(value){values=value;return this},async single(){return {data:(await backend('select * from public.'+table+' where id=$1',[id])).rows[0],error:null}},then(resolve,reject){return backend('update public.document_files set status=$2,error_message=$3 where id=$1',[id,values.status,values.error_message]).then(value=>resolve({data:value.rows,error:null}),reject)}}
+  return query
+ },rpc:async(name,args)=>{
+  try{
+   const entries=Object.entries(args)
+   const result=await backend('select to_jsonb(public.'+name+'('+entries.map(([key],i)=>key+'=>$'+(i+1)).join(',')+')) value',entries.map(([,value])=>value&&typeof value==='object'?JSON.stringify(value):value))
+   const value=result.rows[0].value
+   if(name==='claim_auto_generation'&&!value.existing_asset_id){claimCount++;draftCount=0;current={kind:args.p_kind,claim:value}}
+   return {data:value,error:null}
+  }catch(error){return {data:null,error:{message:error.message}}}
+ }}
+ globalThis.__synapseReliableClient=()=>client
+ globalThis.Deno={env:{get:key=>env[key]},serve:fn=>handler=fn}
+ globalThis.fetch=async(_url,request)=>{
+  const payload=JSON.parse(request.body),prompt=payload.systemInstruction.parts[0].text
+  if(permanent){draftCount++;return Response.json({error:{status:'INVALID_ARGUMENT',message:'Mock configuration error.'}},{status:400})}
+  if(!current){
+   scanDrafts++
+   if(scanDrafts===1)return Response.json({candidates:[{finishReason:'MAX_TOKENS',content:{parts:[{text:'Partial extraction'}]}}]})
+   assert.match(prompt,/DRAFT REVISION/)
+   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:source}]}}]})
+  }
+  draftCount++
+  const {kind,claim}=current,n=claim.options.set_number
+  assert.ok(prompt.includes(claim.options.variant));assert.ok(prompt.includes('saved set '+n))
+  if(draftCount===1){
+   if(kind==='note')return Response.json({candidates:[{finishReason:n===1?'MAX_TOKENS':'STOP',content:{parts:[{text:n===1?'Partial reviewer':outputs.note[0]}]}}]})
+   if(kind==='quiz'&&n===1)return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:'{"quiz":['}]}}]})
+   const bad=n===1?{flashcards:[{front:'Incomplete card with no answer.'}]}:outputs[kind][0]
+   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(bad)}]}}]})
+  }
+  assert.equal(draftCount,2);assert.match(prompt,/DRAFT REVISION/)
+  const items=rows[n-1]
+  const output=kind==='note'?'# '+claim.options.variant+'\n\n## Key terms\n'+source+'\n\n## Study treatment\n'+noteTreatments[n-1]:kind==='deck'?{flashcards:items.map(([front,back,coverage_key])=>({front,back,coverage_key}))}:{quiz:items.map(([question,answer,coverage_key])=>({type:'short_answer',question,answer,options:[],accepted_answers:[],explanation:answer,coverage_key}))}
+  outputs[kind].push(output)
+  return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:typeof output==='string'?output:JSON.stringify(output)}]}}]})
+ }
+ try{
+  const bundle=await build({entryPoints:[fileURLToPath(new URL('../supabase/dashboard/generate-study.ts',import.meta.url))],bundle:true,write:false,platform:'neutral',format:'esm',external:['npm:*']})
+  await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text.replace(/^import.*from "npm:.*";$/m,'const createClient=globalThis.__synapseReliableClient;')).toString('base64'))
+  const request=body=>new Request('https://mock/generate-study',{method:'POST',headers:{Origin:'http://localhost:5173',Authorization:'Bearer valid','Content-Type':'application/json'},body:JSON.stringify(body)})
+  const prepared=await handler(request({action:'prepare',document_id:m.doc}));assert.equal(prepared.status,200,JSON.stringify(await prepared.json()))
+  assert.equal(scanDrafts,2);assert.equal(downloads,1)
+  const first={}
+  for(const kind of ['note','deck','quiz']){
+   const response=await handler(request({action:'generate',document_id:m.doc,kind,initial:true})),body=await response.json()
+   assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.set_number,1)
+   first[kind]=body.asset_id;callCounts.push(draftCount)
+  }
+  await user(0,'select public.review_card($1,0,3)',[first.deck])
+  for(let click=1;click<=5;click++)for(const kind of ['note','deck','quiz']){
+   const response=await handler(request({action:'generate',asset_id:first[kind]})),body=await response.json()
+   assert.equal(response.status,200,`${kind}, click ${click}: `+JSON.stringify(body));assert.equal(body.set_number,click+1)
+   callCounts.push(draftCount)
+  }
+  assert.equal(claimCount,18);assert.deepEqual(callCounts,Array(18).fill(2));assert.equal(downloads,1)
+  assert.equal((await db.query('select count(*)::int n from public.study_assets where material_id=$1',[m.id])).rows[0].n,18)
+  assert.equal((await db.query("select count(*)::int n from private.material_jobs where material_id=$1 and status='completed'",[m.id])).rows[0].n,18)
+  assert.equal((await db.query('select count(*)::int n from public.flashcard_progress where asset_id=$1',[first.deck])).rows[0].n,1)
+  assert.equal((await db.query('select status from public.document_files where id=$1',[m.doc])).rows[0].status,'ready')
+  // Configuration failures remain clear and do not burn three provider calls.
+  permanent=true
+  const rejected=await handler(request({action:'generate',asset_id:first.deck}));assert.equal(rejected.status,500);assert.match((await rejected.json()).error,/400 INVALID_ARGUMENT/)
+  assert.equal(draftCount,1)
+  assert.equal((await db.query('select count(*)::int n from public.study_assets where material_id=$1',[m.id])).rows[0].n,18)
+ }finally{for(const [key,value] of Object.entries(old)){if(value===undefined)delete globalThis[key];else globalThis[key]=value}}
 })

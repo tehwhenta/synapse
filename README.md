@@ -1,12 +1,12 @@
-# Current update: Synapse 1.7
+# Current update: Synapse 1.7.1
 
-Use [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md) for automatic upload generation, one-click new sets, and removal of Seeds/topic choices. Apply migration 010 after 009 and deploy the latest generate-study Dashboard file.
+Use [GENERATION_RELIABILITY_SETUP.md](GENERATION_RELIABILITY_SETUP.md) to fix alternating generation failures. Run migration 011 after 010 and deploy the latest combined generate-study Dashboard file. For the original automatic upload workflow and removal of Seeds/topic choices, use [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md).
 
 # Synapse
 
 A Vue 3 study workspace, designed around your cream, sand, taupe, olive, and warm brown palette.
 
-**Already installed Synapse? Start with [SEEDS_UPDATE.md](SEEDS_UPDATE.md) for version 1.6.** Apply migration `009` after earlier migrations, then redeploy `generate-study`. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
+**Already installed Synapse? Start with [GENERATION_RELIABILITY_SETUP.md](GENERATION_RELIABILITY_SETUP.md).** Older release guides are historical. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
 
 ## Start here
 
@@ -27,14 +27,14 @@ On Windows, `start.bat` installs dependencies if needed and starts the same deve
 - Private PDF, DOCX, PPTX, legacy PPT, image, TXT, and Markdown uploads; 20 MB per file.
 - Comprehensive Gemini reviewers, explained terminology, tables and enumerations, worked mathematical solutions, flashcard decks, and mixed practice quizzes.
 - Fresh generated sets kept alongside earlier sets, with numbered navigation and editable titles.
-- Scanned topics and guided manual/topic generation; 30 daily Seeds per account, resetting at midnight Philippine time, and finite per-format concept coverage.
+- Automatic generation of all three formats on upload; one-click fresh sets with AI-selected counts and no topic/count picker or Seed currency. Invalid drafts are revised within the same action.
 - Custom flashcard decks with individual question/answer editing and deletion, no AI usage; continuous highlighting, sticky reviewer tools, and drawings above text/tables.
 - Formatted note editing with a Word-style toolbar, tables, and equations; printable PDF, offline HTML study sheets, plain text, and optional Anki TSV exports.
 - Resizable/maximizable reviewer windows, colored highlights, written text annotations, and freehand drawing with pen thickness/color and stroke erasing. Annotations are saved per set and included in formatted exports.
 - Account deletion from profile settings, with a 48-hour sign-in cancellation period and storage-first server cleanup.
 - Per-user quiz history, saved spaced reviews, focus sessions, and study streaks.
 - Adjustable focus timer: hover over the time and scroll, or use arrow keys when focused. Pause before adjusting an active countdown; reset keeps the chosen duration.
-- Single-use share links with viewer/editor roles and optional email restriction.
+- Single-use share links/codes with viewer/editor roles and a direct invitation paste box.
 - Folder chat, live/away/offline private presence, and WebRTC video calls without an application participant cap.
 - Camera/microphone controls and screen sharing.
 - Responsive paginated call tiles, separate audio for all peers, and adaptive camera quality; screen sharing is shown full-width.
@@ -76,7 +76,11 @@ On Windows, `start.bat` installs dependencies if needed and starts the same deve
 | `src/components/AdminPanel.vue` | System care usage and reviewed cleanup controls |
 | `supabase/functions/admin-maintenance/` | Authenticated, server-authorized manual cleanup |
 | `ADMIN_AND_READINESS.md` | Exact 1.4 setup, admin role verification, free-plan references and live checks |
-| `SEEDS_UPDATE.md` | Current 1.6 upgrade: Seeds, concept exhaustion, custom card edits, invitations and zoom |
+| `GENERATION_RELIABILITY_SETUP.md` | Current 1.7.1 reliability patch and exact Supabase deployment steps |
+| `AUTOMATIC_GENERATION_SETUP.md` | Automatic upload/new-set workflow and migration 010 |
+| `supabase/migrations/011_generation_reliability.sql` | Six study treatments, ordered history and valid small sets; existing data retained |
+| `supabase/functions/generate-study/reliable.ts` | At most three drafts within one request, with safe transactional saves |
+| `SEEDS_UPDATE.md` | Historical 1.6 upgrade; Seed currency and guided generation are retired |
 | `supabase/migrations/009_seeds_and_custom_cards.sql` | Server-owned daily Seeds, coverage inventory, stable card IDs and authorized mutations |
 | `GUIDED_GENERATION_SETUP.md` | Exact 1.5 local replacement, Supabase migration/function, limits, and live checks |
 | `supabase/migrations/008_guided_generation.sql` | Source records, 20 MB cap, topic metadata, generation limits and retained duplicate history |

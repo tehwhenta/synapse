@@ -1,4 +1,6 @@
-# Synapse 1.7 — automatic study generation
+# Synapse 1.7.1 — automatic study generation
+
+**If you already installed 1.7 and migration 010:** use [GENERATION_RELIABILITY_SETUP.md](GENERATION_RELIABILITY_SETUP.md) for the error fix. It adds migration 011 and the latest function code. The steps below install the complete automatic workflow from an earlier version.
 
 Upload material once. Synapse automatically prepares a reviewer, flashcards, and a practice quiz. There is no topic picker, item-count form, or Seed currency. Open any generated set and click **Generate** to save a fresh set of that same type. Earlier numbered sets and progress remain. Custom flashcards still have their own creation, editing, and deletion controls.
 
@@ -12,16 +14,17 @@ Delete these three retired UI files from your project:
 - `src/components/SeedBalance.vue`
 - `src/components/SeedIcon.vue`
 
-The update changes `src/App.vue`, `src/stores/workspace.js`, `src/style.css`, `src/components/FocusTimer.vue`, and `src/components/StudyViewer.vue`. It also includes the generation backend, bundling script, package files, migration 010, documentation, and tests. Both package files should be replaced together; no new dependencies were added.
+The update changes `src/App.vue`, `src/stores/workspace.js`, `src/style.css`, `src/components/FocusTimer.vue`, and `src/components/StudyViewer.vue`. It also includes the generation backend, bundling script, package files, migrations 010/011, documentation, and tests. Both package files should be replaced together; no new dependencies were added.
 
-## 2. Run migration 010 once
+## 2. Run migrations 010 and 011 once
 
 Use the Supabase project already connected to Synapse. Earlier migrations through `009_seeds_and_custom_cards.sql` must already have succeeded.
 
 1. Open **Supabase → SQL Editor → New query**.
 2. On your computer, open `supabase/migrations/010_automatic_study.sql`.
 3. Copy its entire contents into SQL Editor and click **Run**.
-4. Wait for success. Run this migration only once; do not rerun older successful migrations.
+4. Wait for success, then run the complete `supabase/migrations/011_generation_reliability.sql` in a separate new query.
+5. Run only migrations that have not already succeeded; do not rerun older successful migrations.
 
 The migration preserves existing sets, annotations, custom cards, and practice progress. It adds private server-controlled source preparation and automatic generation, disables the public Seed balance endpoint, and keeps the old currency records only as historical data for existing maintenance. New generation does not check or spend Seeds. The old three-failed-scan counter and exhausted concept inventory no longer block this workflow. A source with no retained text still needs a readable original.
 
@@ -64,9 +67,9 @@ Older failed scan counts no longer need manual resetting for the new workflow. I
 
 The comprehensive reviewer instructions still require terminology with definitions, detailed sections, tables where useful, every source enumeration, and reproducible equation solutions with substitutions, units, restrictions, checks, and common mistakes. They now request the finished notes directly and compact table separators. The earlier errors cannot be attributed to the prompt alone without the provider response: HTTP 400 is a request rejection; unreadable output means a response failed JSON parsing. These are different failure classes.
 
-Flashcards and quizzes use compact JSON-only responses with readable Unicode math rather than LaTeX escape sequences. Item counts are selected by the AI within practical per-set bounds: 3–50 cards and 3–30 quiz questions. Quiz mixes are flexible. These bounds are not choice fields.
+Flashcards and quizzes use compact JSON-only responses with readable Unicode math rather than LaTeX escape sequences. Item counts are selected by the AI within practical per-set bounds: 1–50 cards and 1–30 quiz questions, including useful small complete sets. Quiz mixes are flexible. These bounds are not choice fields.
 
-Generation history is retained per source and format. Normalized question copies, close wording matches, and repeated canonical learning facets are rejected before saving. Reviewer copies and extensively reused passages are rejected. Essential definitions and facts can recur in fresh reviewers; their explanation and study treatment should differ. Perfect semantic non-repetition cannot be guaranteed by a language model. When the source cannot support enough fresh questions, the app asks for different material instead of padding a set.
+Generation history is retained per source and format. Normalized question copies, close wording matches, and repeated canonical learning tasks are rejected before saving. Reviewer copies and extensively reused explanations are rejected, while shared source facts, tables and vocabulary are allowed. Invalid first drafts receive bounded corrective revision within the same user action; only one valid set is saved. Essential definitions and facts can recur in fresh reviewers; their explanation and study treatment should differ. Perfect semantic non-repetition cannot be guaranteed by a language model. When the source cannot support any useful fresh task, the app asks for different material instead of padding a set.
 
 Removing Seeds does not remove Google's API quota, billing, model access, or service limits. Read [Google's troubleshooting guide](https://ai.google.dev/gemini-api/docs/troubleshooting) for provider errors. No retry loop is added for rejected 400 requests, and truncated or invalid answers are never silently saved.
 

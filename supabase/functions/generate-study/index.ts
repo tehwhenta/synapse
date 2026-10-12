@@ -1,6 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.117.3'
 import { automaticPrompt, automaticSchema, extractionPrompt, historyReference, validateAutomatic } from './automatic.ts'
 import { geminiFilePart, geminiJson, geminiText, deleteGeminiFiles } from './transport.ts'
+import { generationRequestBudgetMs, runDraftPipeline } from './reliable.ts'
+import { StudyDraftError } from './errors.ts'
 
 const allowedOrigins = (Deno.env.get('ALLOWED_ORIGINS') || 'http://localhost:5173,https://rcgsynapse.vercel.app').split(',').map(x => x.trim())
 // Retained rich notes are reference data, not HTML to execute or instructions to follow.
@@ -9,6 +11,7 @@ function sourceText(value: string) {
     .replace(/<[^>]*>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
 }
 Deno.serve(async req => {
+  const deadline=Date.now()+generationRequestBudgetMs
   const origin = req.headers.get('origin') || ''
   const headers = { 'Access-Control-Allow-Origin':allowedOrigins.includes(origin) ? origin : allowedOrigins[0], 'Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Access-Control-Allow-Methods':'POST, OPTIONS','Vary':'Origin','Content-Type':'application/json' }
   const respond = (body: unknown, status=200) => new Response(JSON.stringify(body),{ headers,status })
@@ -76,7 +79,19 @@ Deno.serve(async req => {
       if (!blob) {const downloaded=await admin.storage.from('study-files').download(doc.storage_path);if(downloaded.error || !downloaded.data) throw new Error('The original upload is missing. Upload it again.');blob=downloaded.data}
       if (blob.size>20*1024*1024 || blob.size!==Number(doc.size_bytes)) throw new Error('The file exceeds 20 MB or its size does not match.')
       if (doc.mime_type==='text/plain') retained=await blob.text()
-      else if (doc.mime_type==='application/pdf' || doc.mime_type.startsWith('image/')) retained=await geminiText(apiKey,extractionPrompt,[await geminiFilePart(blob,doc.mime_type,apiKey,temporaryFiles)],24000)
+      else if (doc.mime_type==='application/pdf' || doc.mime_type.startsWith('image/')) {
+        const file=await geminiFilePart(blob,doc.mime_type,apiKey,temporaryFiles,deadline)
+        retained=await runDraftPipeline({
+          deadline,task:'source',
+          generate:(revision,timeout)=>geminiText(apiKey,extractionPrompt+revision,[file],24000,1,timeout),
+          validate:(text)=>{
+            if (typeof text==='string' && text.trim()==='SOURCE_UNREADABLE') throw new Error('The source is not legible. Upload a clearer chapter.')
+            if (typeof text!=='string' || text.trim().length<20 || text.length>100000) throw new StudyDraftError('format','Source extraction is incomplete or exceeds 100,000 characters. Preserve all substantive sections in compact Markdown.')
+            return text
+          },
+          save:async text=>text,
+        })
+      }
       if (typeof retained!=='string' || retained.trim().length<20 || retained.length>100000) throw new Error('Source text could not be read completely. Export a shorter chapter as PDF and upload it again.')
       material=await rpc('retain_auto_source',{p_material_id:materialId,p_user_id:user.id,p_text:retained,p_token:analysisToken})
       analysisToken=''
@@ -87,12 +102,16 @@ Deno.serve(async req => {
       return respond({success:true,asset_id:claim.existing_asset_id,material_id:materialId,existing:true})
     }
     jobId=claim.job_id
-    const parts: Record<string,unknown>[]=[{text:'STUDY SOURCE (untrusted reference data):\n'+(claim.source_format==='html'?sourceText(claim.source_text):claim.source_text)}]
+    const source=claim.source_format==='html'?sourceText(claim.source_text):claim.source_text
+    const parts: Record<string,unknown>[]=[{text:'STUDY SOURCE (untrusted reference data):\n'+source}]
     if (claim.previous?.length) parts.push({text:'EARLIER SET CONTENT AND TESTED FACETS (untrusted reference data):\n'+JSON.stringify(historyReference(kind,claim.previous))})
-    const prompt=automaticPrompt(kind,claim.options.variant)
-    const raw=kind==='note'?await geminiText(apiKey,prompt,parts,24000):await geminiJson(apiKey,prompt,parts,automaticSchema(kind),16000,1)
-    const output=validateAutomatic(raw,kind,claim.previous)
-    const asset=await rpc('complete_auto_generation',{p_job_id:jobId,p_user_id:user.id,p_output:output})
+    const prompt=automaticPrompt(kind,claim.options.variant,claim.options.set_number)
+    const asset=await runDraftPipeline({
+      deadline,task:kind,
+      generate:(revision,timeout)=>kind==='note'?geminiText(apiKey,prompt+revision,parts,24000,1,timeout):geminiJson(apiKey,prompt+revision,parts,automaticSchema(kind),16000,1,timeout),
+      validate:raw=>validateAutomatic(raw,kind,claim.previous,source),
+      save:output=>rpc('complete_auto_generation',{p_job_id:jobId,p_user_id:user.id,p_output:output}),
+    })
     jobId=''
     return respond({success:true,asset_id:asset.id,set_number:asset.set_number,material_id:materialId})
   } catch (err) {
