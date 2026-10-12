@@ -1,4 +1,10 @@
-# Upgrade your existing Synapse project to 1.3
+# Upgrade your existing Synapse project to 1.4
+
+## 1.3 -> 1.4: presence, mobile view, and admin maintenance
+
+Read **[ADMIN_AND_READINESS.md](ADMIN_AND_READINESS.md)** for the current upgrade. Replace the source folders and both package files, keep your `.env`/`.git`, apply **006** once, update `cleanup-files`, and create `admin-maintenance`. Your confirmed `rcgsynapse@gmail.com` account is bound to its UUID as admin. No inactive accounts are selected automatically. Run `npm install`, `npm test`, and `npm run build`, then push the frontend to GitHub/Vercel.
+
+Complete any missing earlier upgrades below before applying 006; do not rerun successful migrations.
 
 Your Supabase project already exists. Keep using it: this upgrade preserves existing accounts, spaces, materials, flashcard progress, and quiz attempts.
 

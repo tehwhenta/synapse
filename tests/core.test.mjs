@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build, transform } from 'esbuild'
@@ -41,7 +42,7 @@ test('Signup and recovery email templates contain a plain OTP, no auth links, an
 })
 test('Presence removes stale sessions, counts people once, preserves active calls, and adapts video quality',()=>{
   const now = Date.parse('2026-10-11T10:00:00Z'), id = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
-  const peers = livePresence([{client_id:id(1),user_id:'one',name:'One',away:true,in_call:true,last_seen_at:'2026-10-11T09:59:50Z'},{client_id:id(2),user_id:'one',name:'One',away:false,in_call:false,last_seen_at:'2026-10-11T09:59:50Z'},{client_id:id(3),user_id:'two',name:'Two',last_seen_at:'2026-10-11T09:58:00Z'},{client_id:'bad',user_id:'three'},{client_id:id(4),user_id:'four',last_seen_at:'invalid'}],now)
+  const peers = livePresence([{client_id:id(1),user_id:'one',name:'One',away:true,in_call:true,last_seen_at:'2026-10-11T09:59:50Z'},{client_id:id(2),user_id:'one',name:'One',away:false,in_call:false,last_seen_at:'2026-10-11T09:59:50Z'},{client_id:id(3),user_id:'two',name:'Two',last_seen_at:'2026-10-11T09:57:00Z'},{client_id:'bad',user_id:'three'},{client_id:id(4),user_id:'four',last_seen_at:'invalid'}],now)
   assert.equal(peers.length,2)
   const people = peopleInSpace(peers); assert.equal(people.length,1); assert.equal(people[0].in_call,true); assert.equal(people[0].away,false)
   assert.ok(cameraQuality(20).maxBitrate < cameraQuality(4).maxBitrate)
@@ -106,7 +107,7 @@ test('Edge handlers reject untrusted calls and only persist validated generation
   globalThis.__synapseTestClient=()=>mock
   globalThis.Deno={env:{get:key=>env[key]},serve:fn=>{handler=fn}}
   try{
-    const bundle=await build({entryPoints:[new URL('../supabase/functions/generate-study/index.ts',import.meta.url).pathname],bundle:true,write:false,platform:'neutral',format:'esm',external:['npm:*']})
+    const bundle=await build({entryPoints:[fileURLToPath(new URL('../supabase/functions/generate-study/index.ts',import.meta.url))],bundle:true,write:false,platform:'neutral',format:'esm',external:['npm:*']})
     const source=bundle.outputFiles[0].text.replace(/^import.*from "npm:.*";$/m,'const createClient=globalThis.__synapseTestClient;')
     await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
     assert.equal((await handler(new Request('https://test/functions/v1/generate-study',{method:'OPTIONS',headers:{Origin:'http://localhost:5173'}}))).status,204)
@@ -142,7 +143,7 @@ test('Edge handlers reject untrusted calls and only persist validated generation
     assert.equal(failedRefreshes,1);assert.deepEqual(persisted.p_output,cards)
     let cleanupCalls=0
     globalThis.__synapseTestClient=()=>{cleanupCalls++;throw new Error('Unauthorized cleanup must never create a client')}
-    const cleanup=await build({entryPoints:[new URL('../supabase/functions/cleanup-files/index.ts',import.meta.url).pathname],bundle:true,write:false,platform:'neutral',format:'esm',external:['npm:*']})
+    const cleanup=await build({entryPoints:[fileURLToPath(new URL('../supabase/functions/cleanup-files/index.ts',import.meta.url))],bundle:true,write:false,platform:'neutral',format:'esm',external:['npm:*']})
     const cleanupSource=cleanup.outputFiles[0].text.replace(/^import.*from "npm:.*";$/m,'const createClient=globalThis.__synapseTestClient;')
     await import('data:text/javascript;base64,'+Buffer.from(cleanupSource).toString('base64'))
     assert.equal((await handler(new Request('https://test/cleanup',{method:'POST'}))).status,401)

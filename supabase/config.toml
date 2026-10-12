@@ -22,3 +22,6 @@ verify_jwt = false
 # Only the shared, server-side CRON_SECRET is accepted by this handler.
 [functions.cleanup-files]
 verify_jwt = false
+
+[functions.admin-maintenance]
+verify_jwt = false

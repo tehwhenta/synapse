@@ -1,6 +1,6 @@
 # Publish Synapse at rcgsynapse.vercel.app
 
-Use your existing Supabase project and its data. This guide covers Synapse 1.3, GitHub, Vercel, production invitations, and the 48-hour account deletion feature. Gmail SMTP and your OTP templates remain configured as described in `GMAIL_SMTP_OTP_SETUP.md`.
+Use your existing Supabase project and its data. This guide covers Synapse 1.4, GitHub, Vercel, production invitations, and account deletion. Read **[ADMIN_AND_READINESS.md](ADMIN_AND_READINESS.md)** for the current admin/presence/mobile upgrade. Gmail SMTP and your OTP templates remain configured as described in `GMAIL_SMTP_OTP_SETUP.md`.
 
 ## 1. Update your local project
 
@@ -21,23 +21,24 @@ The app uses `VITE_APP_URL` for invitation links and supported Auth redirect add
 In your existing **Supabase -> SQL Editor -> New query**:
 
 1. If `001_synapse.sql` and `003_study_refinements.sql` already succeeded, **do not rerun them**.
-2. Open `supabase/migrations/004_reviewer_accounts.sql` locally.
-3. Copy its **entire SQL contents**, paste into a new SQL query, and click **Run** once.
+2. If not already applied, run `supabase/migrations/004_reviewer_accounts.sql` once for reviewer drawings and account deletion.
+3. Run `supabase/migrations/006_system_maintenance.sql` once for admin controls, activity, and cleanup leases. If 004 already succeeded, run only 006.
 
 It adds saved reviewer drawing data, private account-deletion requests, caller-scoped request/cancellation functions, a fresh-Auth-session cancellation trigger, and service-only cleanup functions. Existing study sets and accounts are preserved. Keep RLS ON, `study-files` private, and `profile-photos` private. Do not expose the private schema through the Data API.
 
-For a brand-new Supabase project, run `001`, then `003`, then `004`, following `SUPABASE_SETUP.md` for the original setup. `002` and `005` are schedule configuration, not table migrations.
+For a brand-new Supabase project, run `001`, `003`, `004`, then `006`, following `SUPABASE_SETUP.md`. `002` and `005` configure the cleanup schedule. If the admin account is confirmed after 006, run `supabase/admin/grant_admin.sql`, then sign out/sign in.
 
-## 3. Replace both Edge Functions
+## 3. Deploy Edge Functions
 
-These changes require **both** existing functions to be updated:
+Use the files below. From version 1.3, only cleanup and the new admin function need deployment; `generate-study` is unchanged.
 
 | Supabase function | File whose full contents go into its Dashboard `index.ts` |
 | --- | --- |
 | `generate-study` | `supabase/dashboard/generate-study.ts` |
 | `cleanup-files` | `supabase/dashboard/cleanup-files.ts` |
+| `admin-maintenance` (new) | `supabase/dashboard/admin-maintenance.ts` |
 
-For each: **Edge Functions -> function name -> Code -> index.ts**, select all the old code, paste the full matching file, and **Deploy**. Keep gateway **Verify JWT OFF** for both. `generate-study` authenticates users explicitly; `cleanup-files` accepts only the server-side cron secret.
+For each: **Edge Functions -> function name -> Code -> index.ts**, select all the old code, paste the full matching file, and **Deploy**. Create `admin-maintenance` if missing. Keep gateway **Verify JWT OFF**: `generate-study` authenticates users explicitly, `cleanup-files` verifies the server-only cron secret, and `admin-maintenance` verifies the Auth user plus its UUID-bound server role.
 
 Paste the TypeScript file contents, not a filename, a terminal command, or a short `supabase...` snippet. The dashboard versions contain everything required in one file. If you change the maintainable function source later, regenerate them with `node scripts/bundle-dashboard.mjs` before pasting again.
 
@@ -98,7 +99,7 @@ Review files, then commit:
 ```bash
 git status
 git add .
-git commit -m "Prepare Synapse 1.3 for Vercel"
+git commit -m "Prepare Synapse 1.4 for Vercel"
 ```
 
 The included `.gitignore` excludes `.env`, dependency/build folders, and logs. Before committing, confirm that real passwords and server secrets are not in any source file or customized SQL script. If a secret was already committed previously, ignoring the file now does not remove it from Git history; remove it from tracking and rotate that exposed secret.

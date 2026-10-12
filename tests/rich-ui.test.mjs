@@ -1,3 +1,4 @@
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
@@ -7,7 +8,7 @@ import { dirname } from 'node:path'
 import { parse, compileScript } from '@vue/compiler-sfc'
 const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url:'http://localhost:5173',pretendToBeVisual:true })
 let rich, mount, flushPromises, runtime
-const runtimePath = new URL('./.rich-ui-runtime.mjs',import.meta.url).pathname
+const runtimePath = fileURLToPath(new URL('./.rich-ui-runtime.mjs',import.meta.url))
 before(async () => {
   for (const key of ['window','document','HTMLElement','Element','SVGElement','Node','DOMParser','MutationObserver','File','Blob','FileReader','localStorage','sessionStorage','location','history','getComputedStyle']) globalThis[key] = dom.window[key]
   globalThis.requestAnimationFrame = callback => setTimeout(callback,0)
@@ -16,12 +17,12 @@ before(async () => {
   dom.window.Range.prototype.getBoundingClientRect = () => ({left:0,right:0,top:0,bottom:0,width:0,height:0})
   rich = { ...await import('../src/lib/richText.js'), ...await import('../src/lib/studyRendering.js') }
   const utils = await import('@vue/test-utils'); mount = utils.mount; flushPromises = utils.flushPromises
-  const compiled = await build({ stdin:{ contents:"export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:new URL('..',import.meta.url).pathname },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
+  const compiled = await build({ stdin:{ contents:"export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
     {name:'vue-test',setup(builder){builder.onLoad({filter:/\.vue$/},args=>{const {descriptor}=parse(readFileSync(args.path,'utf8'));return {contents:compileScript(descriptor,{id:args.path,inlineTemplate:true}).content,loader:'js',resolveDir:dirname(args.path)}})}}
   ] })
   // Download-style asset glob is a build-time feature, irrelevant to these DOM interaction tests.
   const source = compiled.outputFiles[0].text.replace(/import mathCss from "katex\/dist\/katex.min.css\?raw";/,'const mathCss="";').replace(/const fonts = import\.meta\.glob\([^;]+;/,'const fonts={};')
-  writeFileSync(runtimePath,source); runtime = await import(runtimePath)
+  writeFileSync(runtimePath,source); runtime = await import(pathToFileURL(runtimePath).href)
 })
 after(() => { dom.window.close(); try {unlinkSync(runtimePath)} catch {} })
 

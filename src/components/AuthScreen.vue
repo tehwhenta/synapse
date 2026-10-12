@@ -6,12 +6,13 @@ import Icon from './Icon.vue'
 const auth = useAuthStore()
 const emit = defineEmits(['connect'])
 const mode = ref('signin'), name = ref(''), email = ref(''), password = ref(''), confirmation = ref(''), code = ref(''), busy = ref(false), message = ref(''), error = ref(''), now = ref(Date.now())
+const showPassword = ref(false), showConfirmation = ref(false)
 const verifying = computed(() => !!auth.pendingOtp && !auth.recovering)
 const cooldown = computed(() => Math.max(0, Math.ceil(((auth.pendingOtp?.sentAt || 0) + 60000 - now.value) / 1000)))
 const heading = computed(() => auth.recovering ? 'Choose a new password.' : verifying.value ? auth.pendingOtp.type === 'recovery' ? 'Check your reset code.' : 'Confirm your email.' : mode.value === 'signup' ? 'Create your account.' : mode.value === 'reset' ? 'Reset your password.' : mode.value === 'confirm' ? 'Confirm your email.' : 'Welcome back.')
 const timer = setInterval(() => { now.value = Date.now() }, 1000)
 onBeforeUnmount(() => clearInterval(timer))
-function changeMode(value) { mode.value = value; auth.clearPendingOtp(); code.value = ''; password.value = ''; confirmation.value = ''; error.value = ''; message.value = ''; auth.error = '' }
+function changeMode(value) { mode.value = value; auth.clearPendingOtp(); code.value = ''; password.value = ''; confirmation.value = ''; showPassword.value = false; showConfirmation.value = false; error.value = ''; message.value = ''; auth.error = '' }
 async function submit() {
   if (busy.value) return
   error.value = ''; message.value = ''; busy.value = true
@@ -50,8 +51,8 @@ async function cancelRecovery() { busy.value = true; try { await auth.signOut();
         <label v-if="mode === 'signup' && !auth.recovering && !verifying">Your name<input v-model="name" required maxlength="80" autocomplete="name" placeholder="Your name" /></label>
         <label v-if="!auth.recovering && !verifying">Email address<input v-model="email" type="email" required autocomplete="email" placeholder="you@example.com" /></label>
         <label v-if="verifying">OTP / code<input v-model="code" class="otp-input" type="text" inputmode="numeric" autocomplete="one-time-code" required maxlength="64" placeholder="Enter your code" autofocus /></label>
-        <label v-if="auth.recovering || (!verifying && ['signin','signup'].includes(mode))">{{ auth.recovering ? 'New password' : 'Password' }}<input v-model="password" type="password" required minlength="8" :autocomplete="mode === 'signin' && !auth.recovering ? 'current-password' : 'new-password'" placeholder="At least 8 characters" /></label>
-        <label v-if="auth.recovering">Confirm new password<input v-model="confirmation" type="password" required minlength="8" autocomplete="new-password" /></label>
+        <div v-if="auth.recovering || (!verifying && ['signin','signup'].includes(mode))" class="password-field"><label for="auth-password">{{ auth.recovering ? 'New password' : 'Password' }}</label><div class="password-input"><input id="auth-password" v-model="password" :type="showPassword ? 'text' : 'password'" required minlength="8" :autocomplete="mode === 'signin' && !auth.recovering ? 'current-password' : 'new-password'" placeholder="At least 8 characters" /><button class="icon-button" type="button" :aria-label="showPassword ? 'Hide password' : 'Show password'" :aria-pressed="showPassword" @click="showPassword = !showPassword"><Icon :name="showPassword ? 'EyeOff' : 'Eye'" :size="18" /></button></div></div>
+        <div v-if="auth.recovering" class="password-field"><label for="auth-confirmation">Confirm new password</label><div class="password-input"><input id="auth-confirmation" v-model="confirmation" :type="showConfirmation ? 'text' : 'password'" required minlength="8" autocomplete="new-password" /><button class="icon-button" type="button" :aria-label="showConfirmation ? 'Hide confirmation password' : 'Show confirmation password'" :aria-pressed="showConfirmation" @click="showConfirmation = !showConfirmation"><Icon :name="showConfirmation ? 'EyeOff' : 'Eye'" :size="18" /></button></div></div>
         <p v-if="error || auth.error" class="error-box" role="alert">{{ error || auth.error }}</p><p v-if="message" class="success-box" role="status">{{ message }}</p>
         <button class="button primary full" :disabled="busy">{{ busy ? 'Please wait...' : auth.recovering ? 'Update password' : verifying ? 'Verify code' : mode === 'signup' ? 'Create account' : ['reset','confirm'].includes(mode) ? 'Send code' : 'Sign in' }}<Icon name="ArrowRight" /></button>
       </form>

@@ -1,3 +1,4 @@
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import test, { before, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
@@ -7,7 +8,7 @@ import { dirname } from 'node:path'
 import { parse, compileScript } from '@vue/compiler-sfc'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost:5173', pretendToBeVisual: true })
-const runtimePath = new URL('./.lounge-runtime.mjs',import.meta.url).pathname
+const runtimePath = fileURLToPath(new URL('./.lounge-runtime.mjs',import.meta.url))
 let runtime, mount, flushPromises, channels, peers, stopped, closed, mediaRequest, mediaFactory, encodings, auth, workspace
 const peerId = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 function stream(screen = false) { const tracks = (screen ? ['video'] : ['audio','video']).map(kind => ({ kind, enabled: true, stop() { stopped++ } })); return { getTracks: () => tracks, getAudioTracks: () => tracks.filter(t=>t.kind==='audio'), getVideoTracks: () => tracks.filter(t=>t.kind==='video') } }
@@ -27,12 +28,12 @@ before(async () => {
     channel(){const callbacks={};const channel={on(type,_filter,fn){callbacks[type]=fn;return this},subscribe(fn){this.update=fn;queueMicrotask(()=>fn('SUBSCRIBED'));return this},presenceState(){return {others:peers,self:this.self?[this.self]:[]}},async track(value){this.self=value;callbacks.presence?.();return 'ok'},async send(){return 'ok'},async untrack(){this.self=null},callbacks};channels.push(channel);return channel},
     async removeChannel(channel){channel.update('CLOSED')},
   }
-  const compiled=await build({stdin:{contents:"export {default as StudyRoom} from './src/components/StudyRoom.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:new URL('..',import.meta.url).pathname},bundle:true,write:false,format:'esm',platform:'node',packages:'external',define:{'import.meta.env':'{}'},plugins:[{name:'lounge-test',setup(builder){
+  const compiled=await build({stdin:{contents:"export {default as StudyRoom} from './src/components/StudyRoom.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url))},bundle:true,write:false,format:'esm',platform:'node',packages:'external',define:{'import.meta.env':'{}'},plugins:[{name:'lounge-test',setup(builder){
     builder.onResolve({filter:/lib\/supabase$/},()=>({path:'supabase-mock',namespace:'mock'}))
     builder.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:'export const supabase=globalThis.__loungeClient; export const isConfigured=true;',loader:'js'}))
     builder.onLoad({filter:/\.vue$/},args=>{const {descriptor}=parse(readFileSync(args.path,'utf8'));return {contents:compileScript(descriptor,{id:args.path,inlineTemplate:true}).content,loader:'js',resolveDir:dirname(args.path)}})
   }}]})
-  writeFileSync(runtimePath,compiled.outputFiles[0].contents);runtime=await import(runtimePath)
+  writeFileSync(runtimePath,compiled.outputFiles[0].contents);runtime=await import(pathToFileURL(runtimePath).href)
   const utils=await import('@vue/test-utils');mount=utils.mount;flushPromises=utils.flushPromises
 })
 beforeEach(()=>{
@@ -76,4 +77,24 @@ test('A delayed camera permission response cannot leave media running after leav
   await wrapper.find('.call-welcome .button').trigger('click');wrapper.unmount()
   resolveMedia(stream());await flushPromises()
   assert.equal(stopped,2);assert.equal(closed,0)
+})
+
+test('Page restoration recreates presence, network loss clears it, and repeated tabs count as one person',async t=>{
+  peers=[{client_id:peerId(1),user_id:'buddy',name:'Buddy',away:true,last_seen_at:new Date().toISOString()},{client_id:peerId(2),user_id:'buddy',name:'Buddy',away:false,last_seen_at:new Date().toISOString()}]
+  const wrapper=mount(runtime.StudyRoom,{attachTo:document.body});t.after(()=>wrapper.unmount());await flushPromises()
+  assert.match(wrapper.find('.section-heading .muted').text(),/2 online/)
+  const setVisibility=value=>Object.defineProperty(document,'visibilityState',{value,configurable:true})
+  setVisibility('hidden');document.dispatchEvent(new window.Event('visibilitychange'));await flushPromises()
+  assert.equal(channels[0].self.away,true)
+  assert.match(wrapper.find('.section-heading .muted').text(),/1 online · 1 away/)
+  setVisibility('visible');document.dispatchEvent(new window.Event('visibilitychange'));await flushPromises()
+  assert.equal(channels[0].self.away,false)
+  window.dispatchEvent(new window.Event('pagehide'));await flushPromises()
+  assert.equal(wrapper.emitted('presence').at(-1)[0].length,0)
+  window.dispatchEvent(new window.Event('pageshow'));await flushPromises()
+  assert.equal(channels.length,2);assert.equal(channels[1].self.away,false)
+  Object.defineProperty(navigator,'onLine',{value:false,configurable:true});window.dispatchEvent(new window.Event('offline'));await flushPromises()
+  assert.equal(wrapper.emitted('connection').at(-1)[0],'offline');assert.equal(wrapper.emitted('presence').at(-1)[0].length,0)
+  Object.defineProperty(navigator,'onLine',{value:true,configurable:true});window.dispatchEvent(new window.Event('online'));await flushPromises()
+  assert.equal(channels.length,3);assert.equal(wrapper.emitted('connection').at(-1)[0],'online')
 })

@@ -16,7 +16,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const attempts = ref([]); const progress = ref([]); const sessions = ref([]); const selectedFolderId = ref(null); const loading = ref(false); const uploading = ref(false); const uploadLabel = ref(''); const error = ref('')
   const moreAssets = ref(false), moreDocuments = ref(false), personalStats = ref(null)
   const documentColumns = 'id,folder_id,uploaded_by,name,storage_path,mime_type,size_bytes,status,error_message,processing_started_at,expires_at,purged_at,created_at'
-  let changeChannel, folderChannel, reloadTimer, loadVersion = 0
+  let changeChannel, folderChannel, reloadTimer, workspaceReloadTimer, loadVersion = 0, folderVersion = 0, subscriptionVersion = 0, workspaceSubscriptionVersion = 0
+  const reloadTables = new Set()
+  const folderRequests = new Map()
   const selectedFolder = computed(() => folders.value.find(f => f.id === selectedFolderId.value))
   const folderAssets = computed(() => assets.value.filter(a => a.folder_id === selectedFolderId.value))
   const latestAssets = computed(() => {
@@ -65,19 +67,28 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     } catch (err) { error.value = err.message || 'Could not load your workspace.' }
     finally { if (version === loadVersion) loading.value = false }
   }
-  async function loadFolder() {
+  async function loadFolder(tables = null) {
     if (auth.demo) return
-    const id = selectedFolderId.value
+    const id = selectedFolderId.value, version = folderVersion, userId = auth.user?.id
     if (!id) { assets.value = []; documents.value = []; members.value = []; activities.value = []; messages.value = []; moreAssets.value = false; moreDocuments.value = false; return }
+    const wanted = table => !tables || tables.has(table)
+    const requested = ['study_assets','document_files','folder_members','study_messages'].map(table => {
+      if (!wanted(table)) return null
+      const request = (folderRequests.get(table) || 0) + 1; folderRequests.set(table,request)
+      return {table,request}
+    })
     const rows = await Promise.all([
-      supabase.rpc('list_latest_assets', { p_folder_id: id, p_offset: 0, p_limit: 31 }),
-      supabase.from('document_files').select(documentColumns).eq('folder_id', id).order('created_at', { ascending: false }).limit(31),
-      supabase.from('folder_members').select('*,profiles(display_name,avatar_path)').eq('folder_id', id),
-      supabase.from('study_messages').select('*,profiles(display_name,avatar_path)').eq('folder_id', id).order('created_at', { ascending: false }).limit(100),
+      wanted('study_assets') ? supabase.rpc('list_latest_assets', { p_folder_id: id, p_offset: 0, p_limit: 31 }) : null,
+      wanted('document_files') ? supabase.from('document_files').select(documentColumns).eq('folder_id', id).order('created_at', { ascending: false }).limit(31) : null,
+      wanted('folder_members') ? supabase.from('folder_members').select('*,profiles(display_name,avatar_path)').eq('folder_id', id) : null,
+      wanted('study_messages') ? supabase.from('study_messages').select('*,profiles(display_name,avatar_path)').eq('folder_id', id).order('created_at', { ascending: false }).limit(100) : null,
     ])
-    if (id !== selectedFolderId.value) return
-    const assetRows = check(rows[0]), docRows = check(rows[1]); moreAssets.value = assetRows.length > 30; moreDocuments.value = docRows.length > 30;
-    assets.value = assetRows.slice(0, 30); documents.value = docRows.slice(0, 30); members.value = check(rows[2]); messages.value = check(rows[3]).reverse()
+    if (id !== selectedFolderId.value || version !== folderVersion || userId !== auth.user?.id) return
+    const current = index => rows[index] && folderRequests.get(requested[index].table) === requested[index].request
+    if (current(0)) { const data = check(rows[0]); moreAssets.value = data.length > 30; assets.value = data.slice(0, 30) }
+    if (current(1)) { const data = check(rows[1]); moreDocuments.value = data.length > 30; documents.value = data.slice(0, 30) }
+    if (current(2)) members.value = check(rows[2])
+    if (current(3)) messages.value = check(rows[3]).reverse()
   }
   async function loadMore(type = 'assets') {
     if (auth.demo) return
@@ -86,7 +97,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (id !== selectedFolderId.value) return
     more.value = result.length > 30; target.value.push(...result.slice(0, 30))
   }
-  async function selectFolder(id) { selectedFolderId.value = id; error.value = ''; try { await loadFolder(); await subscribeFolder() } catch (err) { error.value = err.message } }
+  async function selectFolder(id) {
+    const changed = id !== selectedFolderId.value; selectedFolderId.value = id; error.value = ''
+    if (!auth.demo && changed) { ++folderVersion; assets.value = []; documents.value = []; members.value = []; messages.value = []; moreAssets.value = false; moreDocuments.value = false }
+    try { await loadFolder(); if (id === selectedFolderId.value) await subscribeFolder() } catch (err) { if (id === selectedFolderId.value) error.value = err.message }
+  }
   async function createFolder(title, description, color) {
     const folder = auth.demo ? { id: crypto.randomUUID(), title, description, color, owner_id: auth.user.id, created_at: new Date().toISOString() }
       : check(await supabase.rpc('create_folder', { p_title: title, p_description: description, p_color: color }))
@@ -239,28 +254,69 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function sendMessage(body) {
     if (!body.trim()) return
     if (auth.demo) { messages.value.push({ id: crypto.randomUUID(), folder_id: selectedFolderId.value, user_id: auth.user.id, body, created_at: new Date().toISOString(), profiles: { display_name: 'You' } }); persistDemo() }
-    else { check(await supabase.from('study_messages').insert({ folder_id: selectedFolderId.value, user_id: auth.user.id, body: body.trim() })); await loadFolder() }
+    else { check(await supabase.from('study_messages').insert({ folder_id: selectedFolderId.value, user_id: auth.user.id, body: body.trim() })); await loadFolder(new Set(['study_messages'])) }
   }
-  function queueReload() { clearTimeout(reloadTimer); reloadTimer = setTimeout(() => loadFolder().catch(e => { error.value = e.message }), 250) }
+  function queueReload(table, payload) {
+    if (payload?.eventType === 'DELETE') {
+      const state = { study_assets:assets, document_files:documents, study_messages:messages, folder_members:members }[table]
+      const old = payload.old || {}
+      if (old.id && state && !state.value.some(row => row.id === old.id)) return
+      if (old.folder_id && old.folder_id !== selectedFolderId.value) return
+    }
+    reloadTables.add(table)
+    if (reloadTimer) return
+    reloadTimer = setTimeout(() => { reloadTimer = null; const tables = new Set(reloadTables); reloadTables.clear(); void loadFolder(tables).catch(e => { error.value = e.message }) }, 350)
+  }
+  function queueWorkspaceReload() {
+    clearTimeout(workspaceReloadTimer)
+    const userId = auth.user?.id, version = loadVersion
+    workspaceReloadTimer = setTimeout(async () => {
+      try {
+        const rows = check(await supabase.from('folders').select('*').order('created_at', { ascending:true }))
+        if (version !== loadVersion || userId !== auth.user?.id || auth.demo) return
+        folders.value = rows
+        if (!rows.some(f => f.id === selectedFolderId.value)) await selectFolder(rows[0]?.id || null)
+        else await loadFolder(new Set(['folder_members']))
+      } catch (err) { if (version === loadVersion) error.value = err.message }
+    }, 350)
+  }
   async function subscribeFolder() {
     if (!supabase || auth.demo) return
-    if (folderChannel) { await supabase.removeChannel(folderChannel); folderChannel = null }
-    if (!selectedFolderId.value) return
-    folderChannel = supabase.channel(`changes:${selectedFolderId.value}`)
-    for (const table of ['study_assets', 'document_files', 'study_messages']) {
-      for (const event of ['INSERT', 'UPDATE']) folderChannel.on('postgres_changes', { event, schema: 'public', table, filter: `folder_id=eq.${selectedFolderId.value}` }, queueReload)
+    const version = ++subscriptionVersion, id = selectedFolderId.value
+    const previous = folderChannel; folderChannel = null; if (previous) await supabase.removeChannel(previous)
+    clearTimeout(reloadTimer); reloadTimer = null; reloadTables.clear()
+    if (version !== subscriptionVersion || !id || id !== selectedFolderId.value || !auth.user) return
+    const next = supabase.channel(`changes:${id}`); folderChannel = next
+    for (const table of ['study_assets', 'document_files', 'study_messages','folder_members']) {
+      const reload = payload => { if (version === subscriptionVersion && id === selectedFolderId.value) queueReload(table,payload) }
+      for (const event of ['INSERT', 'UPDATE']) next.on('postgres_changes', { event, schema: 'public', table, filter: `folder_id=eq.${id}` }, reload)
       // Supabase cannot filter DELETE events; reload only RLS-visible rows on deletion.
-      folderChannel.on('postgres_changes', { event: 'DELETE', schema: 'public', table }, queueReload)
+      next.on('postgres_changes', { event: 'DELETE', schema: 'public', table }, reload)
     }
-    folderChannel.subscribe()
+    next.on('postgres_changes', { event:'UPDATE',schema:'public',table:'folders',filter:`id=eq.${id}` }, () => { if (version === subscriptionVersion && id === selectedFolderId.value) queueWorkspaceReload() }).subscribe(state => {
+      if (state === 'SUBSCRIBED' && version === subscriptionVersion) queueReload('study_messages') // Catch messages missed during reconnection.
+    })
   }
   async function subscribe() {
     if (!supabase || auth.demo) return
-    if (changeChannel) await supabase.removeChannel(changeChannel)
-    changeChannel = supabase.channel(`workspace:${auth.user.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'folders' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'folder_members' }, () => load()).subscribe()
+    const version = ++workspaceSubscriptionVersion, userId = auth.user?.id
+    const previous = changeChannel; changeChannel = null; if (previous) await supabase.removeChannel(previous)
+    if (version !== workspaceSubscriptionVersion || userId !== auth.user?.id || !userId || auth.demo) return
+    const next = supabase.channel(`workspace:${userId}`); changeChannel = next
+    const reload = () => { if (version === workspaceSubscriptionVersion && userId === auth.user?.id) queueWorkspaceReload() }
+    for (const event of ['INSERT','UPDATE']) {
+      next.on('postgres_changes', { event,schema:'public',table:'folders',filter:`owner_id=eq.${userId}` }, reload)
+      next.on('postgres_changes', { event,schema:'public',table:'folder_members',filter:`user_id=eq.${userId}` }, reload)
+    }
+    next.on('postgres_changes', { event:'DELETE',schema:'public',table:'folders' }, payload => { if (folders.value.some(f => f.id === payload.old?.id)) reload() })
+      .on('postgres_changes', { event:'DELETE',schema:'public',table:'folder_members' }, payload => { if (!payload.old?.user_id || payload.old.user_id === userId) reload() }).subscribe()
     await subscribeFolder()
   }
-  async function dispose() { ++loadVersion; clearTimeout(reloadTimer); if (changeChannel) await supabase?.removeChannel(changeChannel); if (folderChannel) await supabase?.removeChannel(folderChannel); changeChannel = null; folderChannel = null; folders.value = []; assets.value = []; selectedFolderId.value = null; members.value = []; messages.value = []; attempts.value = []; sessions.value = []; progress.value = []; documents.value = []; activities.value = []; moreAssets.value = false; moreDocuments.value = false; personalStats.value = null }
+  async function dispose() {
+    ++loadVersion; ++folderVersion; ++subscriptionVersion; ++workspaceSubscriptionVersion; clearTimeout(reloadTimer); reloadTimer = null; clearTimeout(workspaceReloadTimer); reloadTables.clear()
+    const channels = [changeChannel,folderChannel]; changeChannel = null; folderChannel = null
+    folders.value = []; assets.value = []; selectedFolderId.value = null; members.value = []; messages.value = []; attempts.value = []; sessions.value = []; progress.value = []; documents.value = []; activities.value = []; moreAssets.value = false; moreDocuments.value = false; personalStats.value = null; loading.value = false
+    await Promise.all(channels.filter(Boolean).map(channel => supabase?.removeChannel(channel)))
+  }
   return { folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
 })

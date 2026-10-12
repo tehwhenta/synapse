@@ -2,11 +2,13 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { supabase, isConfigured } from '../lib/supabase'
 import { publicAppUrl } from '../lib/appUrl'
+import { clearProfilePhotos } from '../lib/profilePhotos'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null); const profile = ref(null); const ready = ref(false); const demo = ref(!isConfigured); const recovering = ref(false); const error = ref('')
   const pendingOtp = ref(null)
   const accountReady = ref(false), accountDeletion = ref(null), notice = ref('')
+  const isAdmin = ref(false), maintenanceReady = ref(false)
   let authSubscription, profileVersion = 0, profileTask
   function rememberOtp(value) {
     pendingOtp.value = value
@@ -28,10 +30,19 @@ export const useAuthStore = defineStore('auth', () => {
     if (version !== profileVersion || id !== user.value?.id || demo.value) return
     if (status.error) { console.error('Account settings unavailable; apply migration 004:',status.error.message); error.value = 'Account settings are unavailable. Please try again later or contact the app owner.'; accountReady.value = false; return }
     accountDeletion.value = status.data || null
+    if (accountDeletion.value?.reason === 'inactive' && accountDeletion.value.status === 'pending' && new Date(accountDeletion.value.delete_after).getTime() > Date.now()) {
+      const activity = await supabase.rpc('mark_app_activity')
+      if (version !== profileVersion || id !== user.value?.id) return
+      if (!activity.error) { accountDeletion.value = null; notice.value = 'Welcome back. Your inactive-account cleanup was cancelled.' }
+    }
     if (accountDeletion.value) { accountReady.value = false; profile.value = null; return }
-    const result = await supabase.from('profiles').select('*').eq('id', id).single()
+    const [result, admin] = await Promise.all([
+      supabase.from('profiles').select('*').eq('id', id).single(),
+      supabase.rpc('is_app_admin'),
+    ])
     if (version !== profileVersion || id !== user.value?.id || demo.value) return
-    if (result.error) error.value = `Profile unavailable. Run 001_synapse.sql first. ${result.error.message}`
+    isAdmin.value = !admin.error && admin.data === true; maintenanceReady.value = !admin.error
+    if (result.error) error.value = 'Your profile could not be loaded. Please try again.'
     else { profile.value = result.data; accountReady.value = true; error.value = '' }
     })()
     try { await task.promise } finally { if (profileTask === task) profileTask = null }
@@ -49,11 +60,12 @@ export const useAuthStore = defineStore('auth', () => {
     if (!supabase) { enterDemo(); ready.value = true; return }
     authSubscription = supabase.auth.onAuthStateChange((event, session) => {
       if (demo.value) return
-      if (session?.user?.id !== user.value?.id || event === 'SIGNED_IN') { ++profileVersion; accountReady.value = false }
+      const changedUser = session?.user?.id !== user.value?.id
+      if (changedUser) { clearProfilePhotos(); ++profileVersion; accountReady.value = false; isAdmin.value = false; maintenanceReady.value = false }
       user.value = session?.user || null
       if (event === 'PASSWORD_RECOVERY') markRecovery(session?.user?.id)
-      if (!user.value) { ++profileVersion; profile.value = null; markRecovery(null); accountReady.value = false; accountDeletion.value = null }
-      else setTimeout(() => loadProfile().catch(err => { error.value = err.message; accountReady.value = false }), 0) // Avoid awaiting auth calls inside the auth callback.
+      if (!user.value) { ++profileVersion; profile.value = null; markRecovery(null); accountReady.value = false; accountDeletion.value = null; isAdmin.value = false; maintenanceReady.value = false }
+      else if (changedUser || !accountReady.value || event === 'USER_UPDATED') setTimeout(() => loadProfile().catch(err => { error.value = err.message; accountReady.value = false }), 0) // Refocusing/refreshing a token must not reset the workspace or call.
     }).data.subscription
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError) error.value = sessionError.message
@@ -63,11 +75,11 @@ export const useAuthStore = defineStore('auth', () => {
     ready.value = true
   }
   function enterDemo() {
-    ++profileVersion; demo.value = true; accountReady.value = true; accountDeletion.value = null; user.value = { id: 'demo-user', email: 'preview@synapse.local' }
+    clearProfilePhotos(); ++profileVersion; demo.value = true; accountReady.value = true; accountDeletion.value = null; isAdmin.value = false; maintenanceReady.value = false; user.value = { id: 'demo-user', email: 'preview@synapse.local' }
     let saved; try { saved = JSON.parse(localStorage.getItem('synapse.demo.profile') || 'null') } catch {}
     profile.value = saved || { id: 'demo-user', display_name: 'Student', avatar_path: null }
   }
-  function leaveDemo() { ++profileVersion; demo.value = false; user.value = null; profile.value = null; recovering.value = false; accountReady.value = false }
+  function leaveDemo() { ++profileVersion; demo.value = false; user.value = null; profile.value = null; recovering.value = false; accountReady.value = false; isAdmin.value = false; maintenanceReady.value = false }
   async function cancelDeletionAfterLogin() { const { data, error } = await supabase.rpc('cancel_account_deletion'); if (error) throw error; if (data || accountDeletion.value || notice.value.startsWith('Account deletion scheduled for')) notice.value = 'Account deletion cancelled. Your study materials are kept.' }
   async function signIn(email, password) { accountReady.value = false; error.value = ''; const result = await supabase.auth.signInWithPassword({ email, password }); if (result.error) throw result.error; user.value = result.data.user; await cancelDeletionAfterLogin(); await loadProfile(); if (!accountReady.value) throw new Error(error.value || 'This account is scheduled for deletion. The recovery period has ended.') }
   async function signUp(email, password, name) {
@@ -157,5 +169,5 @@ export const useAuthStore = defineStore('auth', () => {
   }
   async function signOut() { if (demo.value) leaveDemo(); else { const { error } = await supabase.auth.signOut(); if (error) throw error }; ++profileVersion; user.value = null; profile.value = null; accountReady.value = false; accountDeletion.value = null; notice.value = ''; markRecovery(null); rememberOtp(null) }
   function dispose() { ++profileVersion; authSubscription?.unsubscribe() }
-  return { user, profile, ready, demo, recovering, pendingOtp, accountReady, accountDeletion, notice, error, initialize, enterDemo, leaveDemo, signIn, signUp, resetPassword, requestConfirmation, resendCode, verifyCode, clearPendingOtp, updatePassword, updateProfile, requestAccountDeletion, signOut, dispose }
+  return { user, profile, ready, demo, recovering, pendingOtp, accountReady, accountDeletion, notice, isAdmin, maintenanceReady, error, initialize, enterDemo, leaveDemo, signIn, signUp, resetPassword, requestConfirmation, resendCode, verifyCode, clearPendingOtp, updatePassword, updateProfile, requestAccountDeletion, signOut, dispose }
 })

@@ -1,3 +1,4 @@
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
@@ -7,11 +8,11 @@ function memoryStorage() { const data=new Map();return {getItem:k=>data.get(k)||
 test('Sample workspace supports isolated folders, saved notes, quizzes, card reviews, and focus progress',async()=>{
   const old={localStorage:globalThis.localStorage,sessionStorage:globalThis.sessionStorage,location:globalThis.location,history:globalThis.history}
   globalThis.localStorage=memoryStorage();globalThis.sessionStorage=memoryStorage();globalThis.location={search:'',pathname:'/',hash:'',origin:'http://localhost:5173'};globalThis.history={replaceState(){}}
-  const path=new URL('./.workspace-test-runtime.mjs',import.meta.url).pathname
+  const path=fileURLToPath(new URL('./.workspace-test-runtime.mjs',import.meta.url))
   try{
-    const bundled=await build({stdin:{contents:"export { createPinia, setActivePinia } from 'pinia'; export { useAuthStore } from './src/stores/auth.js'; export { useWorkspaceStore } from './src/stores/workspace.js';",resolveDir:new URL('..',import.meta.url).pathname},bundle:true,write:false,format:'esm',platform:'node',external:['@supabase/supabase-js','cfb'],define:{'import.meta.env':'{}'}})
+    const bundled=await build({stdin:{contents:"export { createPinia, setActivePinia } from 'pinia'; export { useAuthStore } from './src/stores/auth.js'; export { useWorkspaceStore } from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url))},bundle:true,write:false,format:'esm',platform:'node',external:['@supabase/supabase-js','cfb'],define:{'import.meta.env':'{}'}})
     writeFileSync(path,bundled.outputFiles[0].contents)
-    const {createPinia,setActivePinia,useAuthStore,useWorkspaceStore}=await import(path)
+    const {createPinia,setActivePinia,useAuthStore,useWorkspaceStore}=await import(pathToFileURL(path).href)
     setActivePinia(createPinia());const auth=useAuthStore();await auth.initialize();const workspace=useWorkspaceStore();await workspace.load()
     assert.equal(auth.demo,true);assert.equal(workspace.latestAssets.length,3)
     const quiz=workspace.folderAssets.find(x=>x.kind==='quiz');const result=await workspace.submitQuiz(quiz,['Breadth-first search','False','queue','O(n)','inorder']);assert.equal(result.correct,5);assert.equal(workspace.stats.quizzes,1)

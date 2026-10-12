@@ -1,6 +1,6 @@
 # Synapse: exact Supabase setup
 
-**Already set up Synapse? Follow [UPGRADE_GUIDE.md](UPGRADE_GUIDE.md) instead.** For version 1.3 and `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful `001` or `003` migrations; run the new `004`, update both functions, and update the existing schedule with `005`.
+**Already set up Synapse? Follow [ADMIN_AND_READINESS.md](ADMIN_AND_READINESS.md) for version 1.4.** For `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful migrations. Apply missing `004` and `006`, deploy updated cleanup and the new admin function, and check the existing ten-minute schedule.
 
 Complete these steps once for your new project. Use the Dashboard route below; the CLI alternative at the end does the same deployments. Do not use both deployment routes unless updating a function.
 
@@ -22,7 +22,7 @@ Complete these steps once for your new project. Use the Dashboard route below; t
 4. Click **Run**.
 5. Confirm the query succeeds before proceeding.
 6. Open another new query, paste the entire contents of `supabase/migrations/003_study_refinements.sql`, and click **Run** once. This adds the current saved-set, photo, and space-deletion features.
-7. In another new query, run `supabase/migrations/004_reviewer_accounts.sql` once. It adds reviewer drawings and the 48-hour account deletion lifecycle. After the cleanup job's original Vault setup below, use `005_cleanup_interval.sql` to update it to every ten minutes.
+7. In another new query, run `supabase/migrations/004_reviewer_accounts.sql` once. It adds reviewer drawings and the 48-hour account deletion lifecycle. Then run `006_system_maintenance.sql` once. After the cleanup job's original Vault setup below, use `005_cleanup_interval.sql` to update it to every ten minutes. Follow `ADMIN_AND_READINESS.md` to create the admin function and bind the confirmed admin account.
 
 Run it once in a new project. It uses a transaction: a failed run rolls back the whole script. If it succeeded, do not run it again. It does not wipe existing tables to make re-runs appear successful.
 

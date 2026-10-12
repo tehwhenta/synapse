@@ -1,3 +1,4 @@
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import test, { before, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
@@ -7,12 +8,12 @@ import { dirname } from 'node:path'
 import { parse, compileScript } from '@vue/compiler-sfc'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost:5173' })
-const runtimePath = new URL('./.otp-runtime.mjs', import.meta.url).pathname
+const runtimePath = fileURLToPath(new URL('./.otp-runtime.mjs', import.meta.url))
 let runtime, mount, flushPromises, authEvent, session, calls, auth
 const account = { id: 'otp-user', email: 'student@example.com' }
 before(async () => {
-  for (const key of ['window','document','HTMLElement','Element','SVGElement','Node','localStorage','sessionStorage','location','history']) globalThis[key] = dom.window[key]
-  const compiled = await build({ stdin: { contents: "export { default as AuthScreen } from './src/components/AuthScreen.vue'; export { createPinia,setActivePinia } from 'pinia'; export { useAuthStore } from './src/stores/auth.js';", resolveDir: new URL('..',import.meta.url).pathname }, bundle: true, write: false, format: 'esm', platform: 'node', packages: 'external', define: { 'import.meta.env': '{}' }, plugins: [{ name: 'otp-test', setup(builder) {
+  for (const key of ['window','document','Document','HTMLElement','Element','SVGElement','Node','localStorage','sessionStorage','location','history']) globalThis[key] = dom.window[key]
+  const compiled = await build({ stdin: { contents: "export { default as AuthScreen } from './src/components/AuthScreen.vue'; export { createPinia,setActivePinia } from 'pinia'; export { useAuthStore } from './src/stores/auth.js';", resolveDir: fileURLToPath(new URL('..',import.meta.url)) }, bundle: true, write: false, format: 'esm', platform: 'node', packages: 'external', define: { 'import.meta.env': '{}' }, plugins: [{ name: 'otp-test', setup(builder) {
     builder.onResolve({ filter: /lib\/supabase$/ }, () => ({ path: 'supabase-mock', namespace: 'mock' }))
     builder.onLoad({ filter: /.*/, namespace: 'mock' }, () => ({ contents: 'export const supabase = globalThis.__otpClient; export const isConfigured = true;', loader: 'js' }))
     builder.onLoad({ filter: /\.vue$/ }, args => { const { descriptor } = parse(readFileSync(args.path,'utf8')); return { contents: compileScript(descriptor,{ id: args.path, inlineTemplate: true }).content, loader: 'js', resolveDir: dirname(args.path) } })
@@ -37,11 +38,32 @@ before(async () => {
     from() { return { select() { return this }, eq() { return this }, async single() { return { data: { id: account.id, display_name: 'Student' }, error: null } } } },
   }
   writeFileSync(runtimePath, compiled.outputFiles[0].contents)
-  runtime = await import(runtimePath)
+  runtime = await import(pathToFileURL(runtimePath).href)
   const utils = await import('@vue/test-utils'); mount = utils.mount; flushPromises = utils.flushPromises
 })
 beforeEach(async () => { calls = []; session = null; sessionStorage.clear(); runtime.setActivePinia(runtime.createPinia()); auth = runtime.useAuthStore(); await auth.initialize() })
 after(() => { delete globalThis.__otpClient; dom.window.close(); try { unlinkSync(runtimePath) } catch {} })
+
+test('Password visibility controls preserve the value and reset when switching forms',async t => {
+  const wrapper=mount(runtime.AuthScreen,{attachTo:document.body});t.after(()=>wrapper.unmount())
+  await wrapper.find('#auth-password').setValue('private-password')
+  await wrapper.find('[aria-label="Show password"]').trigger('click')
+  assert.equal(wrapper.find('#auth-password').attributes('type'),'text');assert.equal(wrapper.find('#auth-password').element.value,'private-password')
+  await wrapper.find('[aria-label="Hide password"]').trigger('click')
+  assert.equal(wrapper.find('#auth-password').attributes('type'),'password')
+  await wrapper.find('[aria-label="Show password"]').trigger('click')
+  await wrapper.findAll('button').find(b=>b.text().includes('Create an account')).trigger('click')
+  assert.equal(wrapper.find('#auth-password').attributes('type'),'password');assert.equal(wrapper.find('#auth-password').element.value,'')
+})
+test('Auth refocus and token refresh do not reset a loaded workspace or repeat profile queries',async () => {
+  session={user:account,access_token:'test-session'};authEvent('SIGNED_IN',session);await new Promise(resolve=>setTimeout(resolve,5));await flushPromises()
+  assert.equal(auth.accountReady,true)
+  const profileRequests=calls.filter(c=>c[0]==='rpc'&&c[1]==='account_deletion_status').length
+  authEvent('SIGNED_IN',session);assert.equal(auth.accountReady,true)
+  authEvent('TOKEN_REFRESHED',session);await flushPromises()
+  assert.equal(auth.accountReady,true)
+  assert.equal(calls.filter(c=>c[0]==='rpc'&&c[1]==='account_deletion_status').length,profileRequests)
+})
 
 test('Signup remembers only the pending email and verifies codes without a fixed digit count', async () => {
   assert.equal(await auth.signUp(account.email, 'private-password', 'Student'), false)

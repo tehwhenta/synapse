@@ -1,3 +1,4 @@
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
@@ -7,17 +8,17 @@ import { dirname } from 'node:path'
 import { parse, compileScript } from '@vue/compiler-sfc'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost:5173' })
-const runtimePath = new URL('./.focus-timer-runtime.mjs', import.meta.url).pathname
+const runtimePath = fileURLToPath(new URL('./.focus-timer-runtime.mjs', import.meta.url))
 let FocusTimer, mount, flushPromises
 before(async () => {
   for (const key of ['window', 'document', 'HTMLElement', 'Element', 'SVGElement', 'Node']) globalThis[key] = dom.window[key]
-  const compiled = await build({ stdin: { contents: "export { default } from './src/components/FocusTimer.vue';", resolveDir: new URL('..', import.meta.url).pathname }, bundle: true, write: false, format: 'esm', platform: 'node', packages: 'external', plugins: [{ name: 'focus-test', setup(builder) {
+  const compiled = await build({ stdin: { contents: "export { default } from './src/components/FocusTimer.vue';", resolveDir: fileURLToPath(new URL('..', import.meta.url)) }, bundle: true, write: false, format: 'esm', platform: 'node', packages: 'external', plugins: [{ name: 'focus-test', setup(builder) {
     builder.onResolve({ filter: /stores\/workspace$/ }, () => ({ path: 'workspace-mock', namespace: 'mock' }))
     builder.onLoad({ filter: /.*/, namespace: 'mock' }, () => ({ contents: 'export const useWorkspaceStore = () => globalThis.__focusWorkspace;', loader: 'js' }))
     builder.onLoad({ filter: /\.vue$/ }, args => { const { descriptor } = parse(readFileSync(args.path, 'utf8')); return { contents: compileScript(descriptor, { id: args.path, inlineTemplate: true }).content, loader: 'js', resolveDir: dirname(args.path) } })
   } }] })
   writeFileSync(runtimePath, compiled.outputFiles[0].contents)
-  FocusTimer = (await import(runtimePath)).default
+  FocusTimer = (await import(pathToFileURL(runtimePath).href)).default
   const utils = await import('@vue/test-utils'); mount = utils.mount; flushPromises = utils.flushPromises
 })
 after(() => { delete globalThis.__focusWorkspace; dom.window.close(); try { unlinkSync(runtimePath) } catch {} })
