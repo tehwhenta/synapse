@@ -15,15 +15,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const folders = ref([]); const assets = ref([]); const documents = ref([]); const members = ref([]); const activities = ref([]); const messages = ref([])
   const attempts = ref([]); const progress = ref([]); const sessions = ref([]); const selectedFolderId = ref(null); const loading = ref(false); const uploading = ref(false); const uploadLabel = ref(''); const error = ref('')
   const moreAssets = ref(false), moreDocuments = ref(false), personalStats = ref(null)
-  const seeds=ref(null),seedError=ref('');let seedRequest=0,seedFetched=0
-  async function refreshSeeds(force=false) {
-    if (!auth.user) return
-    if (!force && seeds.value && Date.now()-seedFetched<30000) return seeds.value
-    const id=auth.user.id,request=++seedRequest
-    if(auth.demo) {const next=new Date(Date.now()+8*3600000);next.setUTCHours(24,0,0,0);seeds.value={remaining:30,total:30,reset_at:new Date(next.getTime()-8*3600000).toISOString(),server_now:new Date().toISOString(),received_at:Date.now(),timezone:'Asia/Manila',demo:true};seedFetched=Date.now();return seeds.value}
-    try {const value=check(await supabase.rpc('my_seed_balance'));if(id===auth.user?.id && request===seedRequest){seeds.value={...value,received_at:Date.now()};seedFetched=Date.now();seedError.value=''};return value}
-    catch(e){if(id===auth.user?.id && request===seedRequest)seedError.value='Seeds are unavailable. Refresh or try again shortly.'}
-  }
   const documentColumns = 'id,folder_id,material_id,uploaded_by,name,storage_path,mime_type,size_bytes,status,error_message,processing_started_at,expires_at,purged_at,created_at'
   let changeChannel, folderChannel, reloadTimer, workspaceReloadTimer, loadVersion = 0, folderVersion = 0, subscriptionVersion = 0, workspaceSubscriptionVersion = 0
   const reloadTables = new Set()
@@ -73,7 +64,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       }
       if (!folders.value.some(f => f.id === selectedFolderId.value)) selectedFolderId.value = folders.value[0]?.id || null
       if (!auth.demo) await loadFolder()
-      await refreshSeeds()
     } catch (err) { error.value = err.message || 'Could not load your workspace.' }
     finally { if (version === loadVersion) loading.value = false }
   }
@@ -170,38 +160,23 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (cached || auth.demo) return cached || null
     return check(await supabase.from('document_files').select(documentColumns).eq('id', id).maybeSingle())
   }
-  async function generateSet(materialId, kind, options = {}) {
+  async function refreshAsset(asset) {
     if (auth.demo) throw new Error('Connect Supabase to generate fresh AI study sets.')
-    if (!canEdit.value) throw new Error('Editor access required.')
+    if (!canEdit.value || asset.is_custom) throw new Error('Editor access to an AI study set is required.')
     if (uploading.value) throw new Error('Wait for the current generation to finish.')
-    uploading.value = true; uploadLabel.value = 'Creating a new saved set…'
-    try {
-      const response = await invokeGeneration({ action:'generate', material_id:materialId, kind, options })
-      await loadFolder(); return response.asset_id
-    } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {});await refreshSeeds(true);localStorage.setItem('synapse.seed-refresh',JSON.stringify({user_id:auth.user?.id,time:Date.now()})) }
+    uploading.value=true;uploadLabel.value='Completing the ideas…'
+    try {const result=await invokeGeneration({action:'generate',asset_id:asset.id});await loadFolder();return result.asset_id}
+    finally {uploading.value=false;uploadLabel.value='';await loadFolder().catch(()=>{})}
   }
-  async function materialInfo(id) { return check(await supabase.rpc('material_generation_info', { p_material_id:id })) }
-  async function prepareGeneration(target) {
-    if (auth.demo) return { id:'sample-material',title:'Data Structures · sample material',status:'ready',remaining:{note:27,deck:27,quiz:27},exhausted:false,topics:[{id:'topic-1',title:'Trees and traversal',description:'Tree terminology, traversal methods, and connections.',available_cards:12,available_quiz:12},{id:'topic-2',title:'Queues',description:'FIFO ordering and queue operations.',available_cards:6,available_quiz:6},{id:'topic-3',title:'Time complexity',description:'How algorithm costs change with input size.',available_cards:9,available_quiz:9}] }
-    if (!canEdit.value) throw new Error('Editor access required.')
-    if (target.material_id) { const info = await materialInfo(target.material_id); if (info.status === 'ready') return info }
-    let text = null
-    const documentId = target.document_id || (target.storage_path ? target.id : null)
-    if (documentId) {
-      const doc = await readDocument(documentId)
-      if (doc && !fileExpiry(doc).expired && !['application/pdf','text/plain'].includes(doc.mime_type) && !doc.mime_type.startsWith('image/')) {
-        const blob = check(await supabase.storage.from('study-files').download(doc.storage_path))
-        text = await extractOfficeText(new File([blob],doc.name,{ type:doc.mime_type }))
-      }
+  async function generateUploadedSets(target) {
+    const completed=[],failures=[]
+    for (const kind of ['note','deck','quiz']) {
+      uploadLabel.value=kind==='note'?'Creating your comprehensive reviewer…':kind==='deck'?'Creating your flashcards…':'Creating your practice quiz…'
+      try {completed.push(await invokeGeneration({action:'generate',document_id:target.document_id,kind,initial:true}));await loadFolder()}
+      catch(e){failures.push({kind,error:e.message});if(/Gemini.*\((400|401|402|403|404|429)|quota exceeded/i.test(e.message))break}
     }
-    const body = documentId ? { document_id:documentId,text } : target.material_id ? { material_id:target.material_id } : { asset_id:target.id }
-    const result = await invokeGeneration({ action:'analyze', ...body })
-    await loadFolder()
-    return materialInfo(result.material_id)
-  }
-  async function refreshAsset(asset, options = {}) {
-    const info = await prepareGeneration(asset)
-    return generateSet(info.id,asset.kind,options)
+    if (!completed.length) throw new Error(failures[0]?.error || 'Study materials could not be generated.')
+    return {...target,completed,failures}
   }
   async function createManualDeck(title, cards) {
     if (!canEdit.value) throw new Error('Editor access required.')
@@ -250,18 +225,20 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       check(await supabase.from('document_files').insert({ id: documentId, folder_id: folderId, uploaded_by: auth.user.id, name: file.name.slice(0, 200), storage_path: path, mime_type: fileType(file.name), size_bytes: file.size }))
       uploadLabel.value = 'Uploading privately…'
       check(await supabase.storage.from('study-files').upload(path, file, { contentType: fileType(file.name), upsert: false }))
-      uploadLabel.value = 'Finding the topics in your material…'
-      const result = await invokeGeneration({ action:'analyze',document_id:documentId,text })
-      await loadFolder()
-      return { document_id:documentId,material_id:result.material_id }
+      uploadLabel.value = 'Reading your study material…'
+      const result = await invokeGeneration({ action:'prepare',document_id:documentId,text })
+      return await generateUploadedSets({document_id:documentId,material_id:result.material_id})
     } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {}) }
   }
   async function retryDocument(doc) {
     if (auth.demo) return
     if (uploading.value) return
-    uploading.value = true; uploadLabel.value = 'Scanning your material…'
+    uploading.value = true; uploadLabel.value = 'Reading your study material…'
     try {
-      return await prepareGeneration(doc)
+      let text=null
+      if(!fileExpiry(doc).expired && !['application/pdf','text/plain'].includes(doc.mime_type) && !doc.mime_type.startsWith('image/')) {const blob=check(await supabase.storage.from('study-files').download(doc.storage_path));text=await extractOfficeText(new File([blob],doc.name,{type:doc.mime_type}))}
+      const prepared=await invokeGeneration({action:'prepare',document_id:doc.id,text})
+      return await generateUploadedSets({document_id:doc.id,material_id:prepared.material_id})
     } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {}) }
   }
   async function submitQuiz(asset, answers) {
@@ -360,11 +337,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await subscribeFolder()
   }
   async function dispose() {
-    ++seedRequest;seeds.value=null;seedError.value='';seedFetched=0
     ++loadVersion; ++folderVersion; ++subscriptionVersion; ++workspaceSubscriptionVersion; clearTimeout(reloadTimer); reloadTimer = null; clearTimeout(workspaceReloadTimer); reloadTables.clear()
     const channels = [changeChannel,folderChannel]; changeChannel = null; folderChannel = null
     folders.value = []; assets.value = []; selectedFolderId.value = null; members.value = []; messages.value = []; attempts.value = []; sessions.value = []; progress.value = []; documents.value = []; activities.value = []; moreAssets.value = false; moreDocuments.value = false; personalStats.value = null; loading.value = false
     await Promise.all(channels.filter(Boolean).map(channel => supabase?.removeChannel(channel)))
   }
-  return { seeds,seedError,refreshSeeds,updateCustomCard,folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, generateSet, materialInfo, prepareGeneration, createManualDeck, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
+  return { updateCustomCard,folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, createManualDeck, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
 })

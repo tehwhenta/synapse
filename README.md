@@ -1,3 +1,7 @@
+# Current update: Synapse 1.7
+
+Use [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md) for automatic upload generation, one-click new sets, and removal of Seeds/topic choices. Apply migration 010 after 009 and deploy the latest generate-study Dashboard file.
+
 # Synapse
 
 A Vue 3 study workspace, designed around your cream, sand, taupe, olive, and warm brown palette.

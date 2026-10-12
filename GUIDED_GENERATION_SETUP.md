@@ -1,3 +1,5 @@
+> Historical upgrade guide. The current 1.7 workflow supersedes topic selection and Seeds. See [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md). Earlier database migrations are still required prerequisites.
+
 # Synapse 1.5 — install this refinement
 
 This upgrade adds a sticky reviewer toolbar, continuous highlighting, drawings above text/tables, mobile timer controls, 20 MB uploads, custom flashcards, scanned topic selection, and server-enforced generation limits. Existing study sets and their progress are preserved.

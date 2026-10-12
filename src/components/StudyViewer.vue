@@ -11,7 +11,7 @@ import DrawingLayer from './DrawingLayer.vue'
 import Modal from './Modal.vue'
 import Icon from './Icon.vue'
 const props = defineProps({ asset: Object })
-const emit = defineEmits(['close', 'notify', 'reupload', 'generate', 'custom-deck'])
+const emit = defineEmits(['close', 'notify', 'reupload', 'custom-deck'])
 const workspace = useWorkspaceStore()
 const asset = ref({ ...props.asset }), sets = ref([props.asset]), setsLoading = ref(false)
 const editing = ref(false), renaming = ref(false), draft = ref(''), title = ref(asset.value.title), busy = ref(false), error = ref(''), discard = ref(false)
@@ -87,7 +87,9 @@ async function refresh(useRetained = false) {
   now.value = Date.now()
   if (asset.value.document_id && sourceState.value.expired && useRetained !== true) { refreshWarning.value = true; return }
   refreshWarning.value = false
-  emit('generate',asset.value)
+  busy.value=true;error.value=''
+  try {const id=await workspace.refreshAsset(asset.value);await loadSets(id);emit('notify','Your new set is ready. Earlier sets are kept.')}
+  catch(e){error.value=e.message}finally{busy.value=false}
 }
 function moveCard(delta) { cardIndex.value = (cardIndex.value+delta+cards.value.length)%cards.value.length; flipped.value = false }
 function editCard(){cardDraft.value={id:card.value.id,front:card.value.front,back:card.value.back};cardEditing.value=true;cardDeleting.value=false;error.value=''}

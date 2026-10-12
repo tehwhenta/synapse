@@ -53,6 +53,68 @@ test('Large source transport uses Gemini Files API and deletes the provider copy
     await assert.rejects(geminiFilePart(blob,'application/pdf','fake-key',[]),/invalid upload address/)
   } finally {globalThis.fetch=previousFetch}
 })
+test('Gemini errors preserve actionable 400 details, redact credentials, and do not retry rejected requests',async()=>{
+  const previousFetch=globalThis.fetch,previousDeno=globalThis.Deno,previousLog=console.error
+  const bundle=await build({entryPoints:[fileURLToPath(new URL('../supabase/functions/generate-study/transport.ts',import.meta.url))],bundle:true,write:false,format:'esm',platform:'neutral'})
+  const {geminiJson}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'))
+  const key='mock-private-api-key',logs=[]
+  let calls=0
+  globalThis.Deno={env:{get:()=> ' models/gemini-3.5-flash-lite '}}
+  console.error=(...args)=>logs.push(args.join(' '))
+  globalThis.fetch=async(url,request)=>{
+    calls++;assert.equal(String(url),'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent')
+    assert.equal(request.headers['x-goog-api-key'],key)
+    return Response.json({error:{code:400,status:'INVALID_ARGUMENT',message:'Request contains an invalid argument. '+key+' Bearer private-token https://example.invalid/file?key='+key,details:[{fieldViolations:[{field:'generation_config.response_json_schema',description:'Too many states in the response schema.'}]}]}},{status:400})
+  }
+  try {
+    await assert.rejects(geminiJson(key,'private source instructions',[{text:'private source text'}],{type:'object'},30000,.35),error=>{
+      assert.match(error.message,/400 INVALID_ARGUMENT; model gemini-3\.5-flash-lite/)
+      assert.match(error.message,/generation_config.response_json_schema: Too many states/)
+      assert.ok(!error.message.includes(key));assert.ok(!error.message.includes('private-token'));assert.ok(!error.message.includes('https://'))
+      return true
+    })
+    assert.equal(calls,1)
+    assert.ok(!logs.join(' ').includes(key));assert.ok(!logs.join(' ').includes('private source'))
+    globalThis.fetch=async()=>Response.json({error:{status:'RESOURCE_EXHAUSTED',message:'Daily quota exceeded.'}},{status:429})
+    await assert.rejects(geminiJson(key,'prompt',[{text:'source'}],{},20,.7),/Gemini quota exceeded \(429 RESOURCE_EXHAUSTED/)
+    globalThis.fetch=async()=>new Response('<html>Untrusted error '+key+'</html>',{status:400})
+    await assert.rejects(geminiJson(key,'prompt',[{text:'source'}],{},20,.7),error=>{
+      assert.match(error.message,/Google rejected a request parameter or project prerequisite/)
+      assert.ok(!error.message.includes(key));assert.ok(!error.message.includes('<html>'));return true
+    })
+  }finally{globalThis.fetch=previousFetch;globalThis.Deno=previousDeno;console.error=previousLog}
+})
+test('Nested Word/PowerPoint source analysis uses JSON mode, preserves its contract, and still rejects invalid inventories',async()=>{
+  const previousFetch=globalThis.fetch,previousDeno=globalThis.Deno
+  const bundle=await build({entryPoints:[fileURLToPath(new URL('../supabase/functions/generate-study/transport.ts',import.meta.url))],bundle:true,write:false,format:'esm',platform:'neutral'})
+  const {geminiJson}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'))
+  const {analysisSchema,analysisPrompt}=await import('data:text/javascript;base64,'+Buffer.from(bundled.outputFiles[0].text).toString('base64'))
+  const source='A queue uses FIFO ordering. Enqueue adds at the rear and dequeue removes the front item.'
+  const output={title:'Queues',source_text:source,topics:[{title:'Queue operations',description:'Queue insertion and removal',card_count:3,quiz_count:6,concepts:[{label:'FIFO ordering',covered_by:[]}]}]}
+  let requests=0
+  globalThis.Deno={env:{get:()=> 'gemini-3.5-flash-lite'}}
+  globalThis.fetch=async(_url,request)=>{
+    requests++
+    const body=JSON.parse(request.body)
+    assert.deepEqual(body.generationConfig,{maxOutputTokens:30000,responseMimeType:'application/json'})
+    assert.ok(body.systemInstruction.parts[0].text.startsWith(analysisPrompt))
+    const contract=JSON.parse(body.systemInstruction.parts[0].text.split('\n').at(-1))
+    assert.deepEqual(contract,analysisSchema)
+    assert.deepEqual(body.contents,[{role:'user',parts:[{text:source}]}])
+    // Emulate the provider rejecting the old constrained-schema request.
+    if ('responseJsonSchema' in body.generationConfig || 'responseSchema' in body.generationConfig) return Response.json({error:{status:'INVALID_ARGUMENT',message:'Request contains an invalid argument.'}},{status:400})
+    return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(output)}]}}]})
+  }
+  try {
+    const raw=await geminiJson('mock-only',analysisPrompt,[{text:source}],analysisSchema,30000,.2)
+    assert.equal(requests,1)
+    assert.equal(validateAnalysis(raw,source).topics[0].concepts[0].id,'topic-1:concept-1')
+    const invalid=structuredClone(raw);invalid.topics[0].quiz_count=10
+    assert.throws(()=>validateAnalysis(invalid,source),/estimates/)
+    invalid.topics[0].quiz_count=6;invalid.topics[0].concepts[0].covered_by=['quiz']
+    assert.throws(()=>validateAnalysis(invalid,source),/invalid concept/)
+  }finally{globalThis.fetch=previousFetch;globalThis.Deno=previousDeno}
+})
 test('Concept inventory maps prior content only to formats with supporting history and never accepts duplicate facets',()=>{
  const raw={title:'Course',source_text:'Source with a complete definition of this concept.',topics:[{title:'Topic',description:'Educational scope',card_count:3,quiz_count:3,concepts:[{label:'The definition of a concept',covered_by:['note']}]}]}
  assert.throws(()=>validateAnalysis(raw),/invalid concept/)
@@ -69,5 +131,10 @@ test('Paid generation accepts only finite supplied concept IDs and a reviewer mu
  assert.throws(()=>validateCoveredOutput({notes:'Notes',covered_concepts:[concepts[0].id]},'note',{},[],concepts),/all remaining/)
  assert.equal(validateCoveredOutput({notes:'Complete explanatory notes',covered_concepts:concepts.map(c=>c.id)},'note',{},[],concepts).covered_concepts.length,3)
  assert.match(coveragePrompt('deck',{total:3}),/Never invent or rename/)
- assert.deepEqual(coverageSchema('deck',{total:3},concepts).properties.flashcards.items.properties.concept_id.enum,concepts.map(c=>c.id))
+ const manyConcepts=Array.from({length:500},(_,i)=>({id:'topic-1:concept-'+(i+1),label:'A distinct facet '+i,topic_id:'topic-1'}))
+ for(const kind of ['note','deck','quiz']) {
+  const shape=coverageSchema(kind,{total:30},manyConcepts)
+  assert.ok(JSON.stringify(shape).length<2500,'Request schema stays small for a full concept inventory')
+  assert.ok(!JSON.stringify(shape).includes('topic-1:concept-500'))
+ }
 })

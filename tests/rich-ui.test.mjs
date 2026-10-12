@@ -17,7 +17,7 @@ before(async () => {
   dom.window.Range.prototype.getBoundingClientRect = () => ({left:0,right:0,top:0,bottom:0,width:0,height:0})
   rich = { ...await import('../src/lib/richText.js'), ...await import('../src/lib/studyRendering.js') }
   const utils = await import('@vue/test-utils'); mount = utils.mount; flushPromises = utils.flushPromises
-  const compiled = await build({ stdin:{ contents:"export {default as App} from './src/App.vue'; export {default as SpaceList} from './src/components/SpaceList.vue'; export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {default as GenerationDialog} from './src/components/GenerationDialog.vue'; export {default as ManualDeckDialog} from './src/components/ManualDeckDialog.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
+  const compiled = await build({ stdin:{ contents:"export {default as App} from './src/App.vue'; export {default as SpaceList} from './src/components/SpaceList.vue'; export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {default as ManualDeckDialog} from './src/components/ManualDeckDialog.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
     {name:'vue-test',setup(builder){builder.onLoad({filter:/\.vue$/},args=>{const {descriptor}=parse(readFileSync(args.path,'utf8'));return {contents:compileScript(descriptor,{id:args.path,inlineTemplate:true}).content,loader:'js',resolveDir:dirname(args.path)}})}}
   ] })
   // Download-style asset glob is a build-time feature, irrelevant to these DOM interaction tests.
@@ -136,9 +136,10 @@ test('Formatted editor keeps displayed bold, tables, and math when opening and s
   assert.ok(wrapper.findAll('.ProseMirror .katex').length>=2)
   wrapper.unmount()
 })
-test('Study viewer navigates retained sets, edits titles, and opens generation configuration without losing earlier sets',async () => {
+test('Study viewer navigates retained sets, edits titles, and refreshes directly without losing earlier sets',async () => {
   runtime.setActivePinia(runtime.createPinia()); const auth=runtime.useAuthStore(); await auth.initialize(); const workspace=runtime.useWorkspaceStore(); await workspace.load()
-  const first = workspace.assets.find(a=>a.id==='deck-trees')
+  const first = workspace.assets.find(a=>a.id==='deck-trees');let refreshed=null
+  workspace.refreshAsset=async asset=>{refreshed=asset.id;return asset.id}
   const wrapper = mount(runtime.StudyViewer,{props:{asset:first},global:{stubs:{Teleport:true}},attachTo:document.body})
   await flushPromises(); assert.equal(wrapper.findAll('.set-numbers button').length,2)
   assert.equal(wrapper.find('.set-numbers .active').text(),'1')
@@ -152,7 +153,7 @@ test('Study viewer navigates retained sets, edits titles, and opens generation c
   assert.equal(workspace.assets.find(a=>a.id==='deck-trees').title,first.title)
   assert.doesNotMatch(wrapper.text(),/JSON/)
   await wrapper.findAll('button').find(b=>b.text()==='Generate').trigger('click'); await flushPromises()
-  assert.equal(wrapper.emitted('generate')[0][0].id,'deck-trees-2')
+  assert.equal(refreshed,'deck-trees-2')
   assert.equal(wrapper.findAll('.set-numbers button').length,2); assert.equal(wrapper.find('.set-numbers .active').text(),'2')
   await wrapper.find('[aria-label="Open set 1"]').trigger('click'); await flushPromises()
   assert.match(wrapper.find('.flashcard-text').text(),/makes a graph a tree/)
@@ -198,35 +199,10 @@ test('Expired-source refresh warns before spending a generation and offers re-up
   await wrapper.findAll('button').find(b=>b.text()==='Upload original').trigger('click')
   assert.equal(wrapper.emitted('reupload').length,1)
   await wrapper.findAll('button').find(b=>b.text()==='Use retained text').trigger('click'); await flushPromises()
-  assert.equal(generated,0); assert.equal(wrapper.emitted('generate')[0][0].id,first.id); assert.equal(workspace.assets.some(a=>a.id===first.id),true)
+  assert.equal(generated,1); assert.equal(workspace.assets.some(a=>a.id===first.id),true)
   wrapper.unmount(); await workspace.dispose()
 })
 
-test('Generation dialog checks exact manual quantities, shows balanced topic counts, and submits the selected workflow',async()=>{
-  runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
-  const info={id:'material',title:'Queues',status:'ready',remaining:{note:30,deck:30,quiz:30},exhausted:false,topics:[{id:'topic-1',title:'Operations',description:'Queue methods',available_cards:4,available_quiz:6}]}
-  workspace.refreshSeeds=async()=>{workspace.seeds={remaining:30,total:30};return workspace.seeds};workspace.prepareGeneration=async()=>info;workspace.materialInfo=async()=>({...info,remaining:{...info.remaining,quiz:20}})
-  let request
-  workspace.generateSet=async(id,kind,options)=>{request={id,kind,options};return 'new-quiz'}
-  workspace.readAsset=async()=>({id:'new-quiz',kind:'quiz',title:'Practice'})
-  auth.demo=false
-  const wrapper=mount(runtime.GenerationDialog,{props:{target:{id:'source'},initialKind:'quiz'},global:{stubs:{Teleport:true}},attachTo:document.body})
-  try {
-    await flushPromises()
-    await wrapper.find('select').setValue('20')
-    assert.equal(wrapper.find('[aria-label="True/False quantity"]').element.value,'6')
-    assert.equal(wrapper.find('[aria-label="Identification quantity"]').element.value,'8')
-    await wrapper.find('[aria-label="Identification quantity"]').setValue('7')
-    assert.equal(wrapper.find('.button.primary').attributes('disabled'),'')
-    await wrapper.find('[aria-label="Identification quantity"]').setValue('8')
-    assert.equal(wrapper.find('.button.primary').attributes('disabled'),undefined)
-    await wrapper.findAll('.generation-workflows button')[1].trigger('click')
-    assert.match(wrapper.text(),/Exactly 2 True\/False, 2 Multiple Choice, and 2 Identification/)
-    await wrapper.find('form').trigger('submit');await flushPromises()
-    assert.deepEqual(request,{id:'material',kind:'quiz',options:{workflow:'topic',topic_id:'topic-1'}})
-    assert.equal(wrapper.emitted('generated')[0][0].id,'new-quiz')
-  } finally {wrapper.unmount();await workspace.dispose()}
-})
 test('Custom flashcard form adds/removes cards and saves a usable deck without generation',async()=>{
   runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
   const before=workspace.assets.length
@@ -329,18 +305,4 @@ test('Invitation dialog provides a paste box without email input, including for 
   await wrapper.find('.join-space-form').trigger('submit');await flushPromises()
   assert.equal(supplied,'https://rcgsynapse.vercel.app/?invite='+ 'a'.repeat(64))
  }finally{wrapper.unmount();await flushPromises()}
-})
-test('Seed and concept states disable generation without exposing attempt counters or a generation icon',async()=>{
- runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load();auth.demo=false
- const info={id:'material',title:'Course',status:'ready',remaining:{note:0,deck:4,quiz:3},topics:[{id:'topic-1',title:'Topic',description:'Source topic',available_cards:4,available_quiz:3}],exhausted:false}
- workspace.prepareGeneration=async()=>info;workspace.refreshSeeds=async()=>{workspace.seeds={remaining:30,total:30};return workspace.seeds}
- const wrapper=mount(runtime.GenerationDialog,{props:{target:{id:'source'}},global:{stubs:{Teleport:true}},attachTo:document.body})
- try{
-  await flushPromises();assert.match(wrapper.text(),/covered everything/);assert.doesNotMatch(wrapper.text(),/attempts/)
-  assert.equal(wrapper.find('.button.primary').text(),'Generate');assert.equal(wrapper.find('.button.primary svg').exists(),false);assert.equal(wrapper.find('.button.primary').attributes('disabled'),'')
-  await wrapper.findAll('.generation-kinds button')[1].trigger('click');await flushPromises()
-  assert.equal(wrapper.find('.button.primary').attributes('disabled'),undefined)
-  workspace.seeds={remaining:0,total:30};await flushPromises()
-  assert.match(wrapper.text(),/No Seeds left/);assert.equal(wrapper.find('.button.primary').attributes('disabled'),'')
- }finally{wrapper.unmount();await workspace.dispose()}
 })

@@ -1,3 +1,5 @@
+> Historical upgrade guide. The current 1.7 workflow supersedes topic selection and Seeds. See [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md). Earlier database migrations are still required prerequisites.
+
 # Synapse 1.6 — Seeds, custom cards, and shared-space joining
 
 This upgrade replaces the 1.5 generation counters with 30 daily Seeds and finite source-concept coverage. It also adds individual custom-card editing/deletion, link/code joining, clearer generation buttons, a distinct lounge icon, and browser zoom support.

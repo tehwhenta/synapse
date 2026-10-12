@@ -1,3 +1,7 @@
+# Current update: Synapse 1.7
+
+Use [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md) for automatic upload generation, one-click new sets, and removal of Seeds/topic choices. Apply migration 010 after 009 and deploy the latest generate-study Dashboard file.
+
 # Synapse: exact Supabase setup
 
 **Already set up Synapse? Follow [SEEDS_UPDATE.md](SEEDS_UPDATE.md) for version 1.6.** For `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful migrations.

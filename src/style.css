@@ -479,16 +479,12 @@ svg { flex-shrink: 0; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto !important; } }
 
 /* Guided generation and reviewer tools. */
-.seed-balance { border-top: 1px solid #d5dfc1; margin-top: 18px; padding-top: 13px; text-align: left; }
-.seed-balance > div { display: flex; align-items: center; gap: 10px; justify-content: center; }.seed-icon { width: 36px; height: 36px; flex: 0 0 36px; }
-.seed-balance > div > span { display: grid; gap: 3px; min-width: 0; }.seed-balance strong { font-size: 22px; font-weight: 550; color: #647347; }.seed-balance strong small { font-size: 12px; font-weight: 500; }.seed-balance > p { font-size: 10px; line-height: 1.55; text-align: center; margin-top: 8px; }
 .custom-card-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 17px; }.custom-card-controls .pill { margin-right: auto; }
 .custom-card-editor { padding: 16px; margin-bottom: 20px; border: 1px solid var(--line); border-radius: 8px; background: #f7f7ef; }
 .join-space-form { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 2px; }.join-space-form input { min-width: 0; width: 100%; }
 .invitation-code-button { grid-column: 1 / -1; justify-self: start; }
-.generation-kinds button:disabled,.topic-list button:disabled { opacity: .65; }.topic-list button:disabled { cursor: default; }
-.focus-card,.seed-balance,.generation-dialog,.custom-card-controls,.join-space-form { max-width: 100%; min-width: 0; }
-@media (max-width: 800px) { .seed-balance > div { justify-content: center; }.seed-balance > p { font-size: 11px; }.custom-card-controls .button { flex: 1; }.custom-card-controls .pill { flex-basis: 100%; justify-content: center; margin-right: 0; } }
+.focus-card,.custom-card-controls,.join-space-form { max-width: 100%; min-width: 0; }
+@media (max-width: 800px) { .custom-card-controls .button { flex: 1; }.custom-card-controls .pill { flex-basis: 100%; justify-content: center; margin-right: 0; } }
 /* Only the space rows scroll; creation and profile controls remain anchored. */
 .sidebar { overflow-y: hidden; }
 .sidebar > .brand,.sidebar > .brand-subtitle,.main-navigation,.sidebar-label,.sidebar-footer { flex-shrink: 0; }
@@ -525,20 +521,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .annotated-paper { isolation: isolate; }
 .drawing-layer { z-index: 20; overflow: visible; }
 .reviewer-paper > .markdown,.annotated-paper > .rich-editor-content { position: relative; z-index: 0; }
-.generation-dialog,.generation-dialog form,.generation-source,.topic-list > button > span { min-width: 0; }
-.generation-loading { display: flex; align-items: center; gap: 12px; padding: 24px 0; color: var(--muted); }
-.generation-source { display: grid; gap: 7px; margin-bottom: 20px; overflow-wrap: anywhere; }
-.generation-kinds { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; margin-bottom: 22px; }
-.generation-kinds > button { display: grid; justify-items: start; gap: 7px; text-align: left; padding: 15px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--muted); min-width: 0; }
-.generation-kinds strong { font-size: 13px; overflow-wrap: anywhere; }.generation-kinds small { font-size: 11px; }
-.generation-kinds > button[aria-pressed="true"],.topic-list > button[aria-pressed="true"] { border-color: #899563; background: #eef1e3; color: #4d5c36; }
-.generation-workflows { display: flex; gap: 8px; }.generation-workflows > button { flex: 1; padding: 11px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; background: transparent; min-width: 0; }
-.generation-workflows > button[aria-pressed="true"] { background: #69794e; border-color: #69794e; color: white; }
-.question-quantities { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }.question-quantities label { min-width: 0; }.question-quantities input { width: 100%; }
-.topic-list { display: grid; gap: 8px; max-height: 310px; overflow-y: auto; overscroll-behavior: contain; }
-.topic-list > button { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: transparent; text-align: left; min-width: 0; }
-.topic-list > button > span:first-child { display: grid; gap: 5px; flex: 1; overflow-wrap: anywhere; }.topic-list strong { font-size: 13px; }.topic-list small { font-size: 11px; line-height: 1.5; }.topic-list .pill { flex-shrink: 0; }
-.generation-retention { line-height: 1.65; }.manual-deck-entry { display: flex; gap: 12px; align-items: center; margin: 16px 0 22px; flex-wrap: wrap; }
+.manual-deck-entry { display: flex; gap: 12px; align-items: center; margin: 16px 0 22px; flex-wrap: wrap; }
 .custom-card-row { border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-width: 0; }.custom-card-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 9px; font-size: 13px; }
 .custom-card-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }.custom-card-fields label { min-width: 0; }.custom-deck-shortcut { margin-bottom: 14px; }
 .mobile-timer-shortcut,.timer-minute-controls { display: none; }.focus-card { scroll-margin: 80px; }
@@ -549,8 +532,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .timer-actions .button { min-height: 44px; font-size: 12px; }.focus-card .timer-display { font-size: 46px; }.focus-card > .tiny { font-size: 11px; }
 }
 @media (max-width: 580px) {
-  .question-quantities,.custom-card-fields { grid-template-columns: minmax(0,1fr); }.generation-kinds { gap: 6px; }.generation-kinds > button { padding: 11px 9px; }.generation-kinds strong { font-size: 12px; }
-  .generation-workflows { flex-wrap: wrap; }.generation-workflows > button { flex-basis: 45%; }.topic-list > button { padding: 12px; gap: 7px; }.topic-list .pill { font-size: 10px; }
+  .custom-card-fields { grid-template-columns: minmax(0,1fr); }
   .manual-deck-entry > .button { width: 100%; }.document-row { flex-wrap: wrap; }.document-row > div { flex: 1 1 calc(100% - 56px); }.document-row > .button { flex: 1 1 40%; }
 }
 @media print {
