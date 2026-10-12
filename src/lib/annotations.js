@@ -21,7 +21,7 @@ export function annotatedHtml(html, annotations) {
     block.style.position = 'relative'
     const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg')
     svg.setAttribute('class', 'saved-drawing'); svg.setAttribute('viewBox', '0 0 1000 1000'); svg.setAttribute('preserveAspectRatio', 'none'); svg.setAttribute('aria-hidden', 'true')
-    svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible'
+    svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:20'
     for (const stroke of strokes) {
       const line = document.createElementNS(ns, 'polyline')
       line.setAttribute('points', stroke.points.map(([x,y]) => `${x * 1000},${y * 1000}`).join(' '))

@@ -71,7 +71,8 @@ function commit() {
 }
 function up(event) { if (event.pointerId !== pointerId) return; commit(); surface.value.releasePointerCapture?.(pointerId); pointerId = null }
 window.addEventListener('resize',queueMeasure)
-onBeforeUnmount(() => { alive = false; commit(); observer?.disconnect(); mutationObserver?.disconnect(); window.removeEventListener('resize',queueMeasure); if (frame) cancelAnimationFrame(frame) })
+document.addEventListener('scroll',queueMeasure,true)
+onBeforeUnmount(() => { alive = false; commit(); observer?.disconnect(); mutationObserver?.disconnect(); window.removeEventListener('resize',queueMeasure); document.removeEventListener('scroll',queueMeasure,true); if (frame) cancelAnimationFrame(frame) })
 </script>
 <template>
   <svg ref="surface" class="drawing-layer" :class="{ 'drawing-active': active, 'drawing-eraser': mode === 'erase' }" :viewBox="`0 0 ${geometry.width} ${geometry.height}`" preserveAspectRatio="none" aria-hidden="true" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up">

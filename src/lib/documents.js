@@ -1,6 +1,6 @@
 import { unzipSync, strFromU8 } from 'fflate'
 
-export const MAX_FILE_SIZE = 10 * 1024 * 1024
+export const MAX_FILE_SIZE = 20 * 1024 * 1024
 const types = {
   pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
   txt: 'text/plain', md: 'text/plain',
@@ -10,7 +10,7 @@ const types = {
 export function fileType(name) { return types[name.split('.').pop().toLowerCase()] }
 export function validateFile(file) {
   if (!fileType(file.name)) throw new Error('Choose a PDF, DOCX, PPTX, PPT, JPG, PNG, WEBP, TXT, or MD file.')
-  if (!file.size || file.size > MAX_FILE_SIZE) throw new Error('Files must be between 1 byte and 10 MB.')
+  if (!file.size || file.size > MAX_FILE_SIZE) throw new Error('Files must be between 1 byte and 20 MB.')
 }
 function xmlText(xml, tag) {
   const doc = new DOMParser().parseFromString(xml, 'application/xml')

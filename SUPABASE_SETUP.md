@@ -1,6 +1,6 @@
 # Synapse: exact Supabase setup
 
-**Already set up Synapse? Follow [ADMIN_AND_READINESS.md](ADMIN_AND_READINESS.md) for version 1.4.** For `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful migrations. Apply missing `004` and `006`, deploy updated cleanup and the new admin function, and check the existing ten-minute schedule.
+**Already set up Synapse? Follow [GUIDED_GENERATION_SETUP.md](GUIDED_GENERATION_SETUP.md) for version 1.5.** For `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful migrations.
 
 Complete these steps once for your new project. Use the Dashboard route below; the CLI alternative at the end does the same deployments. Do not use both deployment routes unless updating a function.
 
@@ -23,6 +23,7 @@ Complete these steps once for your new project. Use the Dashboard route below; t
 5. Confirm the query succeeds before proceeding.
 6. Open another new query, paste the entire contents of `supabase/migrations/003_study_refinements.sql`, and click **Run** once. This adds the current saved-set, photo, and space-deletion features.
 7. In another new query, run `supabase/migrations/004_reviewer_accounts.sql` once. It adds reviewer drawings and the 48-hour account deletion lifecycle. Then run `006_system_maintenance.sql` once. After the cleanup job's original Vault setup below, use `005_cleanup_interval.sql` to update it to every ten minutes. Follow `ADMIN_AND_READINESS.md` to create the admin function and bind the confirmed admin account.
+8. Run `007_admin_email_type.sql`, then `008_guided_generation.sql`, each as a separate complete query. The final migration adds guided topic generation, persistent attempt limits, and the 20 MB study-file cap.
 
 Run it once in a new project. It uses a transaction: a failed run rolls back the whole script. If it succeeded, do not run it again. It does not wipe existing tables to make re-runs appear successful.
 
@@ -30,7 +31,7 @@ The script creates all application tables, profile signup trigger, owner/viewer/
 
 Check **Table Editor** for `profiles`, `folders`, `folder_members`, `folder_invitations`, `document_files`, `study_assets`, `quiz_attempts`, `flashcard_progress`, `study_sessions`, `activity_events`, and `study_messages`.
 
-Check **Storage** for `study-files` and `profile-photos`. Leave both **private**. Their limits are 10 MB for study files and 2 MB for JPG/PNG/WebP profile photos; SQL sets the MIME restrictions and policies.
+Check **Storage** for `study-files` and `profile-photos`. Leave both **private**. Their limits are 20 MB for study files and 2 MB for JPG/PNG/WebP profile photos; SQL sets the MIME restrictions and policies.
 
 ## 3. Configure Authentication
 
@@ -106,7 +107,7 @@ Gemini access, quotas, and billing depend on your Google project. Synapse does n
 5. Deploy it.
 6. Open this function's **Details / Configuration** and turn **Verify JWT** (sometimes labeled **Enforce JWT verification**) **OFF**. Save/update the function settings.
 
-The single-file Dashboard version includes the validator. Do not paste only `supabase/functions/generate-study/index.ts` into a one-file editor: its companion validation import would be missing.
+The single-file Dashboard version includes the validator. Do not paste only `supabase/functions/generate-study/index.ts` into a one-file editor: its companion module imports would be missing.
 
 Disabling the gateway JWT option does not make this handler unauthenticated. The handler explicitly verifies the user's access token with Supabase Auth, then the database requires editor/owner permission before an AI job can be claimed. This works with current signing keys without relying on the legacy gateway JWT path.
 
@@ -200,7 +201,7 @@ Open **http://localhost:5173**. Do not open `index.html` by double-clicking; Vue
 2. Create a study space, for example **Data Structures**.
 3. Write a blank note and save it. Refresh; it should still be there.
 4. Upload a small text file or PDF with real course content. TXT/MD should contain at least 20 characters.
-5. Wait for a reviewer, deck, and quiz to appear. In Table Editor, the document should become `ready` and have three related `study_assets` rows.
+5. Wait for scanned topics and the generation dialog. Generate a reviewer, then use Uploads → Generate sets to choose a manual or topic-based deck and quiz. The document becomes `ready` after its scan; `study_assets` rows appear only for the sets you generate. You can also create custom flashcards without AI.
 6. Review a flashcard, take a quiz, and complete at least 30 seconds of a focus session, then reset/end it. Progress should persist after refresh.
 7. Click **Invite a friend**, select **Viewer**, create the link, and open it in another browser/profile with a different account.
 8. A viewer should be able to read, review, take quizzes, chat, and join the lounge, but not edit materials or upload.

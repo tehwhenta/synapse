@@ -21,6 +21,10 @@ test('Sample workspace supports isolated folders, saved notes, quizzes, card rev
     const folder=await workspace.createFolder('My own subject','A new start','#8c8d65');assert.equal(workspace.folderAssets.length,0);assert.equal(workspace.canEdit,true)
     await workspace.saveNote('First note','# A note');assert.equal(workspace.folderAssets.length,1);const savedId=workspace.folderAssets[0].id
     await workspace.saveNote('Revised','# Updated',savedId);assert.equal(workspace.folderAssets[0].title,'Revised')
+    const custom=await workspace.createManualDeck('My custom deck',[{front:'What is FIFO?',back:'First in, first out.'}])
+    assert.equal(custom.kind,'deck');assert.equal(custom.data.length,1);assert.equal(custom.material_id,undefined)
+    await assert.rejects(workspace.createManualDeck('Bad cards',[{front:'Question',back:''}]),/question and answer/)
+    await workspace.deleteAsset(custom.id)
     await workspace.selectFolder('algorithms');assert.equal(workspace.latestAssets.length,3)
     await workspace.selectFolder(folder.id);await workspace.deleteAsset(savedId);assert.equal(workspace.folderAssets.length,0)
     assert.ok(JSON.parse(localStorage.getItem('synapse.demo')).folders.find(x=>x.id===folder.id))

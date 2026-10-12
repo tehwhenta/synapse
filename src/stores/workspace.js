@@ -15,7 +15,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const folders = ref([]); const assets = ref([]); const documents = ref([]); const members = ref([]); const activities = ref([]); const messages = ref([])
   const attempts = ref([]); const progress = ref([]); const sessions = ref([]); const selectedFolderId = ref(null); const loading = ref(false); const uploading = ref(false); const uploadLabel = ref(''); const error = ref('')
   const moreAssets = ref(false), moreDocuments = ref(false), personalStats = ref(null)
-  const documentColumns = 'id,folder_id,uploaded_by,name,storage_path,mime_type,size_bytes,status,error_message,processing_started_at,expires_at,purged_at,created_at'
+  const documentColumns = 'id,folder_id,material_id,uploaded_by,name,storage_path,mime_type,size_bytes,status,error_message,processing_started_at,expires_at,purged_at,created_at'
   let changeChannel, folderChannel, reloadTimer, workspaceReloadTimer, loadVersion = 0, folderVersion = 0, subscriptionVersion = 0, workspaceSubscriptionVersion = 0
   const reloadTables = new Set()
   const folderRequests = new Map()
@@ -160,15 +160,48 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (cached || auth.demo) return cached || null
     return check(await supabase.from('document_files').select(documentColumns).eq('id', id).maybeSingle())
   }
-  async function refreshAsset(asset) {
+  async function generateSet(materialId, kind, options = {}) {
     if (auth.demo) throw new Error('Connect Supabase to generate fresh AI study sets.')
     if (!canEdit.value) throw new Error('Editor access required.')
     if (uploading.value) throw new Error('Wait for the current generation to finish.')
     uploading.value = true; uploadLabel.value = 'Creating a new saved set…'
     try {
-      const response = await invokeGeneration({ asset_id: asset.id })
+      const response = await invokeGeneration({ action:'generate', material_id:materialId, kind, options })
       await loadFolder(); return response.asset_id
-    } finally { uploading.value = false; uploadLabel.value = '' }
+    } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {}) }
+  }
+  async function materialInfo(id) { return check(await supabase.rpc('material_generation_info', { p_material_id:id })) }
+  async function prepareGeneration(target) {
+    if (auth.demo) return { id:'sample-material',title:'Data Structures · sample material',status:'ready',usage:{note:0,deck:0,quiz:0},topics:[{id:'topic-1',title:'Trees and traversal',description:'Tree terminology, traversal methods, and connections.',card_count:12,quiz_count:12},{id:'topic-2',title:'Queues',description:'FIFO ordering and queue operations.',card_count:6,quiz_count:6},{id:'topic-3',title:'Time complexity',description:'How algorithm costs change with input size.',card_count:9,quiz_count:9}] }
+    if (!canEdit.value) throw new Error('Editor access required.')
+    if (target.material_id) { const info = await materialInfo(target.material_id); if (info.status === 'ready') return info }
+    let text = null
+    const documentId = target.document_id || (target.storage_path ? target.id : null)
+    if (documentId) {
+      const doc = await readDocument(documentId)
+      if (doc && !fileExpiry(doc).expired && !['application/pdf','text/plain'].includes(doc.mime_type) && !doc.mime_type.startsWith('image/')) {
+        const blob = check(await supabase.storage.from('study-files').download(doc.storage_path))
+        text = await extractOfficeText(new File([blob],doc.name,{ type:doc.mime_type }))
+      }
+    }
+    const body = documentId ? { document_id:documentId,text } : target.material_id ? { material_id:target.material_id } : { asset_id:target.id }
+    const result = await invokeGeneration({ action:'analyze', ...body })
+    await loadFolder()
+    return materialInfo(result.material_id)
+  }
+  async function refreshAsset(asset, options = {}) {
+    const info = await prepareGeneration(asset)
+    return generateSet(info.id,asset.kind,options)
+  }
+  async function createManualDeck(title, cards) {
+    if (!canEdit.value) throw new Error('Editor access required.')
+    title = title.trim(); cards = cards.map(c => ({ front:c.front.trim(),back:c.back.trim() }))
+    if (!title || title.length>150 || !cards.length || cards.length>100 || cards.some(c=>!c.front || !c.back || c.front.length>1000 || c.back.length>2000)) throw new Error('Enter a title and 1 to 100 cards, each with a question and answer.')
+    if (new TextEncoder().encode(JSON.stringify(cards)).length>120000) throw new Error('This deck is too large. Split it into smaller decks.')
+    let deck
+    if (auth.demo) { const id=crypto.randomUUID(); deck={ id,series_id:id,set_number:1,folder_id:selectedFolderId.value,kind:'deck',title,content:'',content_format:'markdown',data:cards,created_by:auth.user.id,created_at:new Date().toISOString() }; assets.value.unshift(deck); persistDemo() }
+    else { deck=check(await supabase.rpc('create_manual_deck',{ p_folder_id:selectedFolderId.value,p_title:title,p_cards:cards })); await loadFolder() }
+    return deck
   }
   async function invokeGeneration(body) {
     const response = await supabase.functions.invoke('generate-study', { body })
@@ -194,30 +227,19 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       check(await supabase.from('document_files').insert({ id: documentId, folder_id: folderId, uploaded_by: auth.user.id, name: file.name.slice(0, 200), storage_path: path, mime_type: fileType(file.name), size_bytes: file.size }))
       uploadLabel.value = 'Uploading privately…'
       check(await supabase.storage.from('study-files').upload(path, file, { contentType: fileType(file.name), upsert: false }))
-      uploadLabel.value = 'Creating your reviewer, flashcards & quiz…'
-      const result = await supabase.functions.invoke('generate-study', { body: { document_id: documentId, text } })
-      if (result.error) {
-        let message = result.error.message
-        try { const detail = await result.error.context.json(); message = detail.error || message } catch { /* use SDK message */ }
-        throw new Error(message)
-      }
-      if (result.data?.error) throw new Error(result.data.error)
+      uploadLabel.value = 'Finding the topics in your material…'
+      const result = await invokeGeneration({ action:'analyze',document_id:documentId,text })
       await loadFolder()
+      return { document_id:documentId,material_id:result.material_id }
     } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {}) }
   }
   async function retryDocument(doc) {
     if (auth.demo) return
     if (uploading.value) return
-    if (fileExpiry(doc).expired) throw new Error('The original file expired. Upload it again to generate from the full source.')
-    uploading.value = true; uploadLabel.value = 'Trying generation again…'
+    uploading.value = true; uploadLabel.value = 'Scanning your material…'
     try {
-      const blob = check(await supabase.storage.from('study-files').download(doc.storage_path))
-      const text = await extractOfficeText(new File([blob], doc.name, { type: doc.mime_type }))
-      const response = await supabase.functions.invoke('generate-study', { body: { document_id: doc.id, text } })
-      if (response.error) { let message = response.error.message; try { message = (await response.error.context.json()).error || message } catch {}; throw new Error(message) }
-      if (response.data?.error) throw new Error(response.data.error)
-      await loadFolder()
-    } finally { uploading.value = false; uploadLabel.value = '' }
+      return await prepareGeneration(doc)
+    } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {}) }
   }
   async function submitQuiz(asset, answers) {
     const result = auth.demo ? quizResult(asset.data, answers) : check(await supabase.rpc('submit_quiz', { p_asset_id: asset.id, p_answers: answers }))
@@ -318,5 +340,5 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     folders.value = []; assets.value = []; selectedFolderId.value = null; members.value = []; messages.value = []; attempts.value = []; sessions.value = []; progress.value = []; documents.value = []; activities.value = []; moreAssets.value = false; moreDocuments.value = false; personalStats.value = null; loading.value = false
     await Promise.all(channels.filter(Boolean).map(channel => supabase?.removeChannel(channel)))
   }
-  return { folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
+  return { folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, generateSet, materialInfo, prepareGeneration, createManualDeck, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
 })

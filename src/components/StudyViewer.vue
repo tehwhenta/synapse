@@ -7,14 +7,16 @@ import { renderStudyHtml, printableCards, printableQuiz, studySheet } from '../l
 import { fileExpiry } from '../lib/sourceFiles'
 import { cleanAnnotations, annotatedHtml } from '../lib/annotations'
 const RichEditor = defineAsyncComponent(() => import('./RichEditor.vue'))
+import DrawingLayer from './DrawingLayer.vue'
 import Modal from './Modal.vue'
 import Icon from './Icon.vue'
 const props = defineProps({ asset: Object })
-const emit = defineEmits(['close', 'notify', 'reupload'])
+const emit = defineEmits(['close', 'notify', 'reupload', 'generate', 'custom-deck'])
 const workspace = useWorkspaceStore()
 const asset = ref({ ...props.asset }), sets = ref([props.asset]), setsLoading = ref(false)
 const editing = ref(false), renaming = ref(false), draft = ref(''), title = ref(asset.value.title), busy = ref(false), error = ref(''), discard = ref(false)
 const draftAnnotations = ref([])
+const viewerPaper = ref(null)
 const cardIndex = ref(0), flipped = ref(false), reviewed = ref(new Set()), studyMode = ref('all')
 const questionIndex = ref(0), answers = ref([]), revealed = ref(false), result = ref(null)
 const sourceDocument = ref(null), refreshWarning = ref(false), now = ref(Date.now())
@@ -23,6 +25,7 @@ const clock = setInterval(() => { now.value = Date.now() }, 60000)
 const source = computed(() => workspace.documents.find(d => d.id === asset.value.document_id) || sourceDocument.value)
 const sourceState = computed(() => fileExpiry(source.value, now.value))
 const html = computed(() => annotatedHtml(renderStudyHtml(asset.value.content, asset.value.content_format),asset.value.annotations))
+const readHtml = computed(() => renderStudyHtml(asset.value.content, asset.value.content_format))
 const comments = computed(() => { const root = document.createElement('div'); root.innerHTML = html.value; return [...root.querySelectorAll('[data-comment]')].map(node => ({ text:node.textContent,note:node.dataset.comment })) })
 const cards = computed(() => asset.value.data.map((card,index) => ({ ...card, originalIndex:index })).filter(card => studyMode.value === 'all' || !workspace.progress.some(p => p.asset_id === asset.value.id && p.card_index === card.originalIndex && new Date(p.due_at) > new Date())))
 const card = computed(() => cards.value[cardIndex.value])
@@ -82,9 +85,7 @@ async function refresh(useRetained = false) {
   now.value = Date.now()
   if (asset.value.document_id && sourceState.value.expired && useRetained !== true) { refreshWarning.value = true; return }
   refreshWarning.value = false
-  busy.value = true; error.value = ''
-  try { const id = await workspace.refreshAsset(asset.value); await loadSets(id); emit('notify','Your new set is ready. Earlier sets are kept.') }
-  catch (e) { error.value = e.message } finally { busy.value = false }
+  emit('generate',asset.value)
 }
 function moveCard(delta) { cardIndex.value = (cardIndex.value+delta+cards.value.length)%cards.value.length; flipped.value = false }
 async function rate(rating) {
@@ -138,9 +139,10 @@ onBeforeUnmount(() => { alive = false; clearInterval(clock); finishPrint(); wind
       <form v-if="renaming" class="rename-form stack-form" @submit.prevent="saveTitle"><label>Title for this set<input v-model="title" required maxlength="150" /></label><div class="inline-actions"><button type="button" class="button secondary small" :disabled="busy" @click="renaming = false">Cancel</button><button class="button primary small" :disabled="busy || !title.trim()">Save title<Icon name="Check" :size="15" /></button></div></form>
       <template v-if="asset.kind === 'note'">
         <form v-if="editing" class="stack-form note-editor" @submit.prevent="save"><label>Title for this set<input v-model="title" required maxlength="150" /></label><RichEditor v-model="draft" v-model:annotations="draftAnnotations" /><div class="inline-actions"><button type="button" class="button secondary" :disabled="busy" @click="editing = false">Cancel edits</button><button class="button primary" :disabled="busy || !title.trim()">{{ busy ? 'Saving…' : 'Save reviewer' }}<Icon name="Check" :size="16" /></button></div></form>
-        <template v-else><article class="markdown" v-html="html"></article><details v-if="comments.length" class="reviewer-comments"><summary>Text annotations ({{ comments.length }})</summary><dl><template v-for="(comment,i) in comments" :key="i"><dt>{{ comment.text }}</dt><dd>{{ comment.note }}</dd></template></dl></details></template>
+        <template v-else><article ref="viewerPaper" class="annotated-paper reviewer-paper"><div class="markdown" v-html="readHtml"></div><DrawingLayer :host="viewerPaper" :model-value="asset.annotations || []" mode="text" /></article><details v-if="comments.length" class="reviewer-comments"><summary>Text annotations ({{ comments.length }})</summary><dl><template v-for="(comment,i) in comments" :key="i"><dt>{{ comment.text }}</dt><dd>{{ comment.note }}</dd></template></dl></details></template>
       </template>
       <template v-else-if="asset.kind === 'deck'">
+        <button v-if="workspace.canEdit" class="button ghost small custom-deck-shortcut" @click="emit('custom-deck')"><Icon name="Plus" :size="15" />Create custom flashcards</button>
         <div class="deck-controls"><div class="segmented"><button :class="{ active:studyMode === 'all' }" @click="studyMode = 'all'">All cards</button><button :class="{ active:studyMode === 'due' }" @click="studyMode = 'due'">Due for review</button></div><span class="tiny muted">{{ reviewed.size }} reviewed this session</span></div>
         <template v-if="card"><button :key="asset.id + ':' + card.originalIndex" class="flashcard" :class="{ 'is-flipped': flipped }" @click="flipped = !flipped" :aria-label="flipped ? 'Show question' : 'Reveal answer'" :aria-pressed="flipped"><span class="flashcard-inner"><span class="flashcard-face flashcard-front" :aria-hidden="flipped" :inert="flipped || undefined"><span class="card-face-label"><Icon name="CircleHelp" :size="16" />Question</span><span class="flashcard-text" v-html="renderStudyHtml(card.front)"></span><span class="tiny muted">Reveal answer<Icon name="RotateCcw" :size="14" /></span></span><span class="flashcard-face flashcard-back" :aria-hidden="!flipped" :inert="!flipped || undefined"><span class="card-face-label"><Icon name="CheckCheck" :size="16" />Answer</span><span class="flashcard-text" v-html="renderStudyHtml(card.back)"></span><span class="tiny muted">Show question<Icon name="RotateCcw" :size="14" /></span></span></span></button><div class="card-navigation"><button class="icon-button" aria-label="Previous card" @click="moveCard(-1)"><Icon name="ChevronLeft" /></button><span>{{ cardIndex+1 }} <span class="muted">of {{ cards.length }}</span></span><button class="icon-button" aria-label="Next card" @click="moveCard(1)"><Icon name="ChevronRight" /></button></div><div class="ratings" :class="{ 'ratings-hidden': !flipped }" :aria-hidden="!flipped" :inert="!flipped || undefined"><button v-for="(label,i) in ['Again','Hard','Good','Easy']" :key="label" class="button secondary" :disabled="busy || !flipped" @click="rate(i+1)">{{ label }}</button></div><p class="tiny muted center">Your rating schedules the card for its next review.</p></template>
         <div v-else class="empty-state"><Icon name="CheckCheck" :size="34" /><h3>You’re all caught up.</h3><p>There are no cards due right now.</p></div>

@@ -82,7 +82,8 @@ test('Study streak respects local calendar dates and permits yesterday as the la
 test('Supported formats and size caps; Anki uses a TSV row per card',()=>{
   for(const name of ['notes.PDF','book.docx','slides.pptx','slides.ppt','photo.jpg','text.md']) assert.ok(fileType(name))
   assert.throws(()=>validateFile({name:'script.exe',size:1024}),/Choose a PDF/)
-  assert.throws(()=>validateFile({name:'book.pdf',size:10485761}),/10 MB/)
+  assert.doesNotThrow(()=>validateFile({name:'book.pdf',size:20971520}))
+  assert.throws(()=>validateFile({name:'book.pdf',size:20971521}),/20 MB/)
   assert.equal(ankiTsv([{front:'Hello\nworld',back:'Yes\tindeed'}]),'Hello world\tYes indeed')
 })
 test('Legacy PPT extracts text atoms and rejects invalid record boundaries safely',()=>{
@@ -91,61 +92,55 @@ test('Legacy PPT extracts text atoms and rejects invalid record boundaries safel
   assert.equal(extractPptText(atom),'A binary tree is a connected graph.')
   atom.writeUInt32LE(1000000,4);assert.equal(extractPptText(atom),'')
 })
-test('Edge handlers reject untrusted calls and only persist validated generation',async()=>{
+test('Edge handlers authenticate, scan private sources once, and save only exact fresh guided sets',async()=>{
   const previousDeno=globalThis.Deno, previousClient=globalThis.__synapseTestClient, previousFetch=globalThis.fetch
   const env={SUPABASE_URL:'https://test.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'server-only',ALLOWED_ORIGINS:'http://localhost:5173',CRON_SECRET:'server-cleanup-only'}
-  let handler,claims=0,persisted=null,failedRefreshes=0,storageReads=0,activeAccount=true
-  const validOutput={title:'Study',source_text:'Source notes',notes:'# Notes',flashcards:Array.from({length:3},()=>({front:'A?',back:'B.'})),quiz:Array.from({length:3},()=>({type:'multiple_choice',question:'Q?',options:['A','B','C','D'],answer:'A',accepted_answers:[],explanation:'Because A.'}))}
+  const id='11111111-1111-4111-8111-111111111111'
+  let handler,claims=0,persisted=null,failed=0,storageReads=0,activeAccount=true,ready=false,hash=null
+  const sourceText='A source note about a queue.'
+  const analysis={title:'Queues',source_text:sourceText,topics:[{title:'FIFO operations',description:'Queue insertion and removal',card_count:3,quiz_count:6}]}
+  const material=()=>({id,source_hash:hash,source_format:'markdown',source_text:ready?sourceText:'',analysis_status:ready?'ready':'unscanned'})
   const mock={auth:{getUser:async(token)=>token==='real-session'?{data:{user:{id:'user'}},error:null}:{data:{user:null},error:{message:'invalid'}}},rpc:async(name,args)=>{
     if(name==='account_is_active')return {data:activeAccount,error:null}
-    if(name==='claim_generation'){claims++;return {data:{id:args.p_document_id,status:'processing',storage_path:'file.txt',mime_type:'text/plain',size_bytes:28},error:null}}
-    if(name==='claim_asset_refresh')return {data:{job_id:'refresh-job',kind:'deck',source_text:'<p>A queue uses first in first out ordering.</p><span data-type="inline-math" data-latex="x&lt;5"></span>',source_format:'html',previous:['Define FIFO']},error:null}
-    if(name==='fail_asset_refresh'){failedRefreshes++;return {data:null,error:null}}
-    if(name==='complete_asset_refresh'){persisted=args;return {data:{id:'new-set',set_number:2},error:null}}
-    persisted=args;return {data:null,error:null}
-  },storage:{from:()=>({download:async()=>{storageReads++;return {data:new Blob(['A source note about a queue.']),error:null}}})}}
+    if(name==='generation_source')return {data:{document:{id,expires_at:new Date(Date.now()+86400000).toISOString(),storage_path:'file.txt',mime_type:'text/plain',size_bytes:new Blob([sourceText]).size},material:material()},error:null}
+    if(name==='bind_generation_source'){assert.match(args.p_hash,/^[0-9a-f]{64}$/);hash=args.p_hash;return {data:material(),error:null}}
+    if(name==='claim_material_analysis')return {data:{cached:ready,token:'scan',material:material()},error:null}
+    if(name==='finish_material_analysis'){ready=true;assert.equal(args.p_output.topics[0].id,'topic-1');return {data:null,error:null}}
+    if(name==='claim_material_generation'){claims++;return {data:{job_id:'guided-job',kind:'deck',source_text:sourceText,source_format:'markdown',previous:[{prompt:'Define FIFO',coverage_key:'fifo:definition'}],topics:[],options:{workflow:'topic',topic_id:'topic-1',topic_title:'FIFO operations',total:3}},error:null}}
+    if(name==='fail_material_generation'){failed++;return {data:null,error:null}}
+    if(name==='complete_material_generation'){persisted=args;return {data:{id:'new-set',set_number:2},error:null}}
+    return {data:null,error:null}
+  },from:()=>({update:()=>({eq:()=>Promise.resolve({error:null})})}),storage:{from:()=>({download:async()=>{storageReads++;return {data:new Blob([sourceText]),error:null}}})}}
   globalThis.__synapseTestClient=()=>mock
   globalThis.Deno={env:{get:key=>env[key]},serve:fn=>{handler=fn}}
   try{
     const bundle=await build({entryPoints:[fileURLToPath(new URL('../supabase/functions/generate-study/index.ts',import.meta.url))],bundle:true,write:false,platform:'neutral',format:'esm',external:['npm:*']})
-    const source=bundle.outputFiles[0].text.replace(/^import.*from "npm:.*";$/m,'const createClient=globalThis.__synapseTestClient;')
-    await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
-    assert.equal((await handler(new Request('https://test/functions/v1/generate-study',{method:'OPTIONS',headers:{Origin:'http://localhost:5173'}}))).status,204)
+    await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text.replace(/^import.*from "npm:.*";$/m,'const createClient=globalThis.__synapseTestClient;')).toString('base64'))
     const req=(auth='',body={},origin='http://localhost:5173')=>new Request('https://test/functions/v1/generate-study',{method:'POST',headers:{Origin:origin,Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify(body)})
-    assert.equal((await handler(req())).status,401)
-    assert.equal((await handler(req('Bearer forged'))).status,401)
+    assert.equal((await handler(new Request('https://test/generate',{method:'OPTIONS',headers:{Origin:'http://localhost:5173'}}))).status,204)
+    assert.equal((await handler(req())).status,401);assert.equal((await handler(req('Bearer forged'))).status,401)
     assert.equal((await handler(req('Bearer real-session',{},'https://unapproved.example'))).status,403)
-    assert.equal(claims,0)
-    activeAccount=false
-    assert.equal((await handler(req('Bearer real-session',{document_id:'11111111-1111-4111-8111-111111111111'}))).status,403)
-    assert.equal(claims,0)
-    activeAccount=true
-    assert.equal((await handler(req('Bearer real-session',{document_id:'not-uuid'}))).status,400)
-    assert.equal((await handler(req('Bearer real-session',{document_id:'11111111-1111-4111-8111-111111111111'}))).status,503)
-    env.GEMINI_API_KEY='mock-only'
-    globalThis.fetch=async(_url,options)=>{
-      const payload=JSON.parse(options.body)
-      assert.match(payload.systemInstruction.parts[0].text,/comprehensive set of notes/)
-      assert.equal('source_text' in payload.generationConfig.responseJsonSchema.properties,false)
-      assert.equal(payload.generationConfig.temperature,0.3)
-      const {source_text,...withoutRepeatedSource}=validOutput
-      return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(withoutRepeatedSource)}]}}]})
-    }
-    assert.equal((await handler(req('Bearer real-session',{document_id:'11111111-1111-4111-8111-111111111111'}))).status,200)
-    assert.equal(claims,1);assert.equal(persisted.p_user_id,'user');assert.deepEqual(persisted.p_output,{...validOutput,source_text:'A source note about a queue.'})
-    const cards={flashcards:[{front:'Which operation inserts at the rear?',back:'Enqueue.'},{front:'What does dequeue remove?',back:'The oldest queued item.'},{front:'How do queues preserve arrival order?',back:'Items are removed from the front.'}]}
-    globalThis.fetch=async(_url,options)=>{const payload=JSON.parse(options.body);assert.deepEqual(Object.keys(payload.generationConfig.responseJsonSchema.properties),['flashcards']);assert.match(payload.contents[0].parts[0].text,/\$x<5\$/);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(cards)}]}}]})}
-    const refreshed=await handler(req('Bearer real-session',{asset_id:'11111111-1111-4111-8111-111111111111'}))
-    assert.equal(refreshed.status,200);assert.equal((await refreshed.json()).asset_id,'new-set');assert.equal(storageReads,1);assert.deepEqual(persisted.p_output,cards)
-    const repeated=structuredClone(cards);repeated.flashcards[0].front='Define FIFO'
+    activeAccount=false;assert.equal((await handler(req('Bearer real-session',{action:'analyze',document_id:id}))).status,403);activeAccount=true
+    assert.equal((await handler(req('Bearer real-session',{action:'analyze',document_id:'not-uuid'}))).status,400)
+    assert.equal((await handler(req('Bearer real-session',{action:'analyze',document_id:id,asset_id:id}))).status,400)
+    assert.equal((await handler(req('Bearer real-session',{action:'analyze',document_id:id}))).status,503)
+    assert.equal(claims,0);env.GEMINI_API_KEY='mock-only'
+    globalThis.fetch=async(_url,options)=>{const payload=JSON.parse(options.body);assert.match(payload.systemInstruction.parts[0].text,/EVERY substantive section/);assert.match(payload.contents[0].parts[0].text,/source note/);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(analysis)}]}}]})}
+    const analyzed=await handler(req('Bearer real-session',{action:'analyze',document_id:id}));assert.equal(analyzed.status,200);assert.equal((await analyzed.json()).material_id,id);assert.equal(storageReads,1);assert.equal(claims,0)
+    globalThis.fetch=async()=>{throw new Error('Cached analysis must never call Gemini')}
+    assert.equal((await handler(req('Bearer real-session',{action:'analyze',document_id:id}))).status,200);assert.equal(storageReads,1)
+    const cards={flashcards:[{front:'Which operation inserts at the rear?',back:'Enqueue.',coverage_key:'queue:insertion'},{front:'What does dequeue remove?',back:'The oldest queued item.',coverage_key:'queue:removal'},{front:'How do queues preserve arrival order?',back:'Items are removed from the front.',coverage_key:'queue:arrival_order'}]}
+    globalThis.fetch=async(_url,options)=>{const payload=JSON.parse(options.body);assert.deepEqual(Object.keys(payload.generationConfig.responseJsonSchema.properties),['flashcards']);assert.match(payload.systemInstruction.parts[0].text,/EXACTLY 3 flashcards/);assert.match(payload.contents[0].parts[1].text,/fifo:definition/);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(cards)}]}}]})}
+    const generated=await handler(req('Bearer real-session',{action:'generate',material_id:id,kind:'deck',options:{workflow:'topic',topic_id:'topic-1'}}))
+    assert.equal(generated.status,200);assert.equal((await generated.json()).asset_id,'new-set');assert.equal(claims,1);assert.deepEqual(persisted.p_output,cards)
+    const repeated=structuredClone(cards);repeated.flashcards[0].coverage_key='fifo:definition'
     globalThis.fetch=async()=>Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(repeated)}]}}]})
-    assert.equal((await handler(req('Bearer real-session',{asset_id:'11111111-1111-4111-8111-111111111111'}))).status,500)
-    assert.equal(failedRefreshes,1);assert.deepEqual(persisted.p_output,cards)
+    assert.equal((await handler(req('Bearer real-session',{action:'generate',material_id:id,kind:'deck',options:{workflow:'topic',topic_id:'topic-1'}}))).status,500)
+    assert.equal(failed,1);assert.deepEqual(persisted.p_output,cards)
     let cleanupCalls=0
     globalThis.__synapseTestClient=()=>{cleanupCalls++;throw new Error('Unauthorized cleanup must never create a client')}
     const cleanup=await build({entryPoints:[fileURLToPath(new URL('../supabase/functions/cleanup-files/index.ts',import.meta.url))],bundle:true,write:false,platform:'neutral',format:'esm',external:['npm:*']})
-    const cleanupSource=cleanup.outputFiles[0].text.replace(/^import.*from "npm:.*";$/m,'const createClient=globalThis.__synapseTestClient;')
-    await import('data:text/javascript;base64,'+Buffer.from(cleanupSource).toString('base64'))
+    await import('data:text/javascript;base64,'+Buffer.from(cleanup.outputFiles[0].text.replace(/^import.*from "npm:.*";$/m,'const createClient=globalThis.__synapseTestClient;')).toString('base64'))
     assert.equal((await handler(new Request('https://test/cleanup',{method:'POST'}))).status,401)
     assert.equal((await handler(new Request('https://test/cleanup',{method:'POST',headers:{'x-cron-secret':'incorrect'}}))).status,401)
     assert.equal(cleanupCalls,0)

@@ -1,4 +1,9 @@
-# Upgrade your existing Synapse project to 1.4
+# Upgrade your existing Synapse project to 1.5
+
+## 1.4 → 1.5: guided generation and reviewer tools
+
+Follow **[GUIDED_GENERATION_SETUP.md](GUIDED_GENERATION_SETUP.md)** first. Merge the update files, run `008_guided_generation.sql` once after prior migrations, and paste the entire `supabase/dashboard/generate-study.ts` into the existing Supabase function’s `index.ts`. Keep RLS ON. The sections below document earlier upgrades; do not rerun successful older migrations.
+
 
 ## 1.3 -> 1.4: presence, mobile view, and admin maintenance
 
@@ -160,7 +165,7 @@ The new prompt asks for comprehensive topic coverage, terminology with definitio
 
 For mathematical material it asks for the given values and unknown, symbol definitions, formula/method selection, domain restrictions, numbered solution steps with reasons, units, a final answer, a verification, and common mistakes. Missing or unreadable values must be identified rather than guessed. Math renders as formatted equations.
 
-Refreshed cards and questions are checked against prompts from the five most recent sets to reject exact repeats. Source concepts may recur because they still need practice. Model quality and provider quotas still affect results; if refresh fails, the earlier sets stay intact. Each refresh counts toward the existing 20-generation daily limit.
+Current cards and questions are checked against all retained history for their material/type, including deleted sets, for normalized copies, strongly similar wording, and repeated learning objectives. Source concepts may recur because they still need practice. Model quality and provider quotas still affect results; if refresh fails, the earlier sets stay intact. Each refresh counts toward the existing 20-generation daily limit.
 
 Refresh normally uses the original retained text. An available PDF or image can be read directly while its raw upload is still retained. After raw-file expiry, refresh uses the retained extraction; older versions of the app may have stored a shorter source digest. Reupload a source if you need content that was absent from that digest. Editing a reviewer changes that set; it does not rewrite the source for its sibling flashcards and quizzes. Manually written notes can generate a new reviewer set from their current content.
 

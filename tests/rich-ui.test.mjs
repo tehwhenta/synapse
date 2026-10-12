@@ -17,7 +17,7 @@ before(async () => {
   dom.window.Range.prototype.getBoundingClientRect = () => ({left:0,right:0,top:0,bottom:0,width:0,height:0})
   rich = { ...await import('../src/lib/richText.js'), ...await import('../src/lib/studyRendering.js') }
   const utils = await import('@vue/test-utils'); mount = utils.mount; flushPromises = utils.flushPromises
-  const compiled = await build({ stdin:{ contents:"export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
+  const compiled = await build({ stdin:{ contents:"export {default as App} from './src/App.vue'; export {default as SpaceList} from './src/components/SpaceList.vue'; export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {default as GenerationDialog} from './src/components/GenerationDialog.vue'; export {default as ManualDeckDialog} from './src/components/ManualDeckDialog.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
     {name:'vue-test',setup(builder){builder.onLoad({filter:/\.vue$/},args=>{const {descriptor}=parse(readFileSync(args.path,'utf8'));return {contents:compileScript(descriptor,{id:args.path,inlineTemplate:true}).content,loader:'js',resolveDir:dirname(args.path)}})}}
   ] })
   // Download-style asset glob is a build-time feature, irrelevant to these DOM interaction tests.
@@ -36,6 +36,16 @@ test('Highlights, text annotations, and freehand pen settings survive serializat
     await wrapper.find('[aria-label="Highlight selected text"]').trigger('click')
     assert.match(wrapper.emitted('update:modelValue').at(-1)[0],/<mark[^>]+data-highlight-color/)
     await new Promise(resolve=>setTimeout(resolve,30)); await flushPromises()
+    const highlighter=wrapper.find('[aria-label="Highlight selected text"]')
+    assert.equal(highlighter.attributes('aria-pressed'),'true')
+    editor.commands.setTextSelection({from:20,to:28})
+    await new Promise(resolve=>setTimeout(resolve,150)); await flushPromises()
+    assert.equal(wrapper.findAll('.ProseMirror mark').length,2)
+    await wrapper.find('.ProseMirror').trigger('keydown',{key:'Escape'})
+    assert.equal(highlighter.attributes('aria-pressed'),'false')
+    editor.commands.setTextSelection({from:30,to:34})
+    await new Promise(resolve=>setTimeout(resolve,150)); await flushPromises()
+    assert.equal(wrapper.findAll('.ProseMirror mark').length,2)
     await wrapper.find('[aria-label="Add text annotation"]').trigger('click')
     await wrapper.find('.annotation-editor textarea').setValue('Remember the multiplier.')
     await wrapper.findAll('.annotation-editor button').find(button=>button.text()==='Save annotation').trigger('click')
@@ -126,7 +136,7 @@ test('Formatted editor keeps displayed bold, tables, and math when opening and s
   assert.ok(wrapper.findAll('.ProseMirror .katex').length>=2)
   wrapper.unmount()
 })
-test('Study viewer navigates retained sets, edits titles, and opens a new set without losing the first',async () => {
+test('Study viewer navigates retained sets, edits titles, and opens generation configuration without losing earlier sets',async () => {
   runtime.setActivePinia(runtime.createPinia()); const auth=runtime.useAuthStore(); await auth.initialize(); const workspace=runtime.useWorkspaceStore(); await workspace.load()
   const first = workspace.assets.find(a=>a.id==='deck-trees')
   const wrapper = mount(runtime.StudyViewer,{props:{asset:first},global:{stubs:{Teleport:true}},attachTo:document.body})
@@ -141,9 +151,9 @@ test('Study viewer navigates retained sets, edits titles, and opens a new set wi
   assert.equal(workspace.assets.find(a=>a.id==='deck-trees-2').title,'My own practice title')
   assert.equal(workspace.assets.find(a=>a.id==='deck-trees').title,first.title)
   assert.doesNotMatch(wrapper.text(),/JSON/)
-  workspace.refreshAsset = async current => {const next={...current,id:'deck-trees-3',set_number:3,data:[{front:'A new prompt?',back:'A new answer.'}]};workspace.assets.push(next);return next.id}
   await wrapper.findAll('button').find(b=>b.text()==='Generate new set').trigger('click'); await flushPromises()
-  assert.equal(wrapper.findAll('.set-numbers button').length,3); assert.equal(wrapper.find('.set-numbers .active').text(),'3')
+  assert.equal(wrapper.emitted('generate')[0][0].id,'deck-trees-2')
+  assert.equal(wrapper.findAll('.set-numbers button').length,2); assert.equal(wrapper.find('.set-numbers .active').text(),'2')
   await wrapper.find('[aria-label="Open set 1"]').trigger('click'); await flushPromises()
   assert.match(wrapper.find('.flashcard-text').text(),/makes a graph a tree/)
   wrapper.unmount(); await workspace.dispose()
@@ -188,6 +198,95 @@ test('Expired-source refresh warns before spending a generation and offers re-up
   await wrapper.findAll('button').find(b=>b.text()==='Upload original').trigger('click')
   assert.equal(wrapper.emitted('reupload').length,1)
   await wrapper.findAll('button').find(b=>b.text()==='Use retained text').trigger('click'); await flushPromises()
-  assert.equal(generated,1); assert.equal(workspace.assets.some(a=>a.id===first.id),true)
+  assert.equal(generated,0); assert.equal(wrapper.emitted('generate')[0][0].id,first.id); assert.equal(workspace.assets.some(a=>a.id===first.id),true)
   wrapper.unmount(); await workspace.dispose()
+})
+
+test('Generation dialog checks exact manual quantities, shows balanced topic counts, and submits the selected workflow',async()=>{
+  runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
+  const info={id:'material',title:'Queues',status:'ready',usage:{note:0,deck:0,quiz:0},topics:[{id:'topic-1',title:'Operations',description:'Queue methods',card_count:4,quiz_count:6}]}
+  workspace.prepareGeneration=async()=>info;workspace.materialInfo=async()=>({...info,usage:{...info.usage,quiz:1}})
+  let request
+  workspace.generateSet=async(id,kind,options)=>{request={id,kind,options};return 'new-quiz'}
+  workspace.readAsset=async()=>({id:'new-quiz',kind:'quiz',title:'Practice'})
+  auth.demo=false
+  const wrapper=mount(runtime.GenerationDialog,{props:{target:{id:'source'},initialKind:'quiz'},global:{stubs:{Teleport:true}},attachTo:document.body})
+  try {
+    await flushPromises()
+    await wrapper.find('select').setValue('20')
+    assert.equal(wrapper.find('[aria-label="True/False quantity"]').element.value,'6')
+    assert.equal(wrapper.find('[aria-label="Identification quantity"]').element.value,'8')
+    await wrapper.find('[aria-label="Identification quantity"]').setValue('7')
+    assert.equal(wrapper.find('.button.primary').attributes('disabled'),'')
+    await wrapper.find('[aria-label="Identification quantity"]').setValue('8')
+    assert.equal(wrapper.find('.button.primary').attributes('disabled'),undefined)
+    await wrapper.findAll('.generation-workflows button')[1].trigger('click')
+    assert.match(wrapper.text(),/Exactly 2 True\/False, 2 Multiple Choice, and 2 Identification/)
+    await wrapper.find('form').trigger('submit');await flushPromises()
+    assert.deepEqual(request,{id:'material',kind:'quiz',options:{workflow:'topic',topic_id:'topic-1'}})
+    assert.equal(wrapper.emitted('generated')[0][0].id,'new-quiz')
+  } finally {wrapper.unmount();await workspace.dispose()}
+})
+test('Custom flashcard form adds/removes cards and saves a usable deck without generation',async()=>{
+  runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
+  const before=workspace.assets.length
+  workspace.generateSet=async()=>{throw new Error('Custom decks must not invoke AI')}
+  const wrapper=mount(runtime.ManualDeckDialog,{global:{stubs:{Teleport:true}},attachTo:document.body})
+  try {
+    await wrapper.find('input').setValue('My own queue cards')
+    await wrapper.find('[aria-label="Question 1"]').setValue('What does FIFO mean?')
+    await wrapper.find('[aria-label="Answer 1"]').setValue('First in, first out.')
+    await wrapper.findAll('button').find(b=>b.text().startsWith('Add a card')).trigger('click')
+    assert.equal(wrapper.findAll('.custom-card-row').length,2)
+    await wrapper.find('[aria-label="Remove card 2"]').trigger('click')
+    await wrapper.find('form').trigger('submit');await flushPromises()
+    assert.equal(workspace.assets.length,before+1)
+    const deck=wrapper.emitted('created')[0][0];assert.equal(deck.title,'My own queue cards');assert.equal(deck.data[0].back,'First in, first out.')
+  } finally {wrapper.unmount();await workspace.dispose()}
+})
+
+test('Custom flashcard creation appears only in the Flashcards workspace section',async()=>{
+  runtime.setActivePinia(runtime.createPinia())
+  const wrapper=mount(runtime.App,{global:{stubs:{Teleport:true,StudyRoom:true,StudyViewer:true,RichEditor:true,AdminPanel:true,FocusTimer:true,Avatar:true}},attachTo:document.body})
+  try {
+    await flushPromises();await flushPromises()
+    assert.equal(wrapper.find('.manual-deck-entry').exists(),false)
+    const tabs=wrapper.findAll('.material-tabs button')
+    assert.ok(tabs.length)
+    await tabs.find(b=>b.text()==='Flashcards').trigger('click')
+    assert.equal(wrapper.find('.manual-deck-entry').exists(),true)
+    await tabs.find(b=>b.text()==='All materials').trigger('click')
+    assert.equal(wrapper.find('.manual-deck-entry').exists(),false)
+    await tabs.find(b=>b.text()==='Reviewers').trigger('click')
+    assert.equal(wrapper.find('.manual-deck-entry').exists(),false)
+  } finally {wrapper.unmount();await flushPromises()}
+})
+test('Spaces scroll independently after three entries, accumulate smooth wheel movement, and keep create outside the scrollport',async()=>{
+  const spaces=Array.from({length:5},(_,i)=>({id:'space-'+i,title:'Space '+i,color:'#8c8d65',owner_id:'owner'}))
+  const wrapper=mount(runtime.SpaceList,{props:{spaces:spaces.slice(0,3),selectedId:'space-0',userId:'owner'},attachTo:document.body})
+  const previousMedia=window.matchMedia
+  try {
+    assert.equal(wrapper.find('.spaces-scrollport').classes().includes('has-overflow'),false)
+    await wrapper.setProps({spaces})
+    const port=wrapper.find('.spaces-scrollport')
+    assert.equal(port.classes().includes('has-overflow'),true)
+    assert.equal(port.attributes('tabindex'),'0')
+    assert.equal(port.find('.add-folder').exists(),false)
+    Object.defineProperties(port.element,{scrollHeight:{value:248,configurable:true},clientHeight:{value:146,configurable:true}})
+    const calls=[];port.element.scrollTo=options=>calls.push(options)
+    window.matchMedia=()=>({matches:false})
+    const wheel=new dom.window.WheelEvent('wheel',{deltaY:40,bubbles:true,cancelable:true});port.element.dispatchEvent(wheel)
+    port.element.dispatchEvent(new dom.window.WheelEvent('wheel',{deltaY:40,bubbles:true,cancelable:true}));await flushPromises()
+    assert.equal(wheel.defaultPrevented,true)
+    assert.deepEqual(calls.map(c=>c.top),[40,80]);assert.equal(calls[0].behavior,'smooth')
+    const zoom=new dom.window.WheelEvent('wheel',{deltaY:40,ctrlKey:true,bubbles:true,cancelable:true});port.element.dispatchEvent(zoom);assert.equal(zoom.defaultPrevented,false)
+    await wrapper.findAll('.folder-button')[4].trigger('click');assert.equal(wrapper.emitted('select')[0][0],'space-4')
+    const last=wrapper.findAll('.folder-button')[4].element
+    Object.defineProperties(last,{offsetTop:{value:204},offsetHeight:{value:44}})
+    window.matchMedia=()=>({matches:true})
+    await wrapper.setProps({selectedId:'space-4'});await flushPromises()
+    assert.deepEqual(calls.at(-1),{top:102,behavior:'instant'})
+    await wrapper.find('.add-folder').trigger('click');assert.equal(wrapper.emitted('create').length,1)
+    assert.equal(wrapper.findAll('.folder-button').length,5)
+  } finally {window.matchMedia=previousMedia;wrapper.unmount()}
 })
