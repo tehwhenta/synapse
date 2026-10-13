@@ -1,3 +1,5 @@
+> Historical 1.8.1 instructions. For the current 1.8.2 update, use [GENERATION_PERFORMANCE_SETUP.md](GENERATION_PERFORMANCE_SETUP.md).
+
 # Synapse 1.8.1 — faster generation and automatic recovery
 
 This update keeps the simple upload workflow: one file produces a reviewer, flashcards and a quiz. It reduces avoidable queue delay, automatically resumes recoverable pauses, rejects unreadable uploads, restores visible generation progress, and trims repetitive reviewer instructions.

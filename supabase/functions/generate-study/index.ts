@@ -39,7 +39,7 @@ Deno.serve(async req=>{
    if(!uuid.test(input.request_id) || input.material_id)return respond({error:'A request ID and uploaded file or study set are required.'},400)
    const ready=await admin.rpc('generation_queue_ready')
    if(ready.error || !ready.data)return respond({error:'Generation setup is incomplete. The app owner needs to finish the queue setup.'},503)
-   const result=await admin.rpc('enqueue_generation',{p_user_id:user.id,p_request_id:input.request_id,p_document_id:input.document_id || null,p_asset_id:input.asset_id || null,p_text:input.text || null})
+   const result=await admin.rpc('enqueue_generation',{p_user_id:user.id,p_request_id:input.request_id,p_document_id:input.document_id || null,p_asset_id:input.asset_id || null,p_text:input.text || null,p_intake:input.intake || null})
    if(result.error)throw result.error
    // A failed kick cannot lose an accepted task: cron will pick it up.
    await admin.rpc('dispatch_generation_queue')

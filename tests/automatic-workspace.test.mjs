@@ -28,6 +28,9 @@ test('Browser submits one durable upload request, observes all three stages, and
   const queued=await workspace.uploadDocument(new File(['A complete source about queues and their FIFO operations.'],'queues.txt',{type:'text/plain'}))
   assert.equal(queued.status,'queued');assert.equal(workspace.uploading,false);assert.equal(tasks.length,1)
   assert.equal(requests.length,2);assert.equal(requests[0].request_id,requests[1].request_id,'Lost acknowledgement retries the same key')
+  assert.ok(Number.isInteger(requests[0].intake.read_ms) && requests[0].intake.read_ms>=0)
+  assert.ok(Number.isInteger(requests[0].intake.upload_ms) && requests[0].intake.upload_ms>=0)
+  assert.deepEqual(requests[0].intake,requests[1].intake,'Admission retries preserve the original upload timings')
   assert.equal(assets.length,0,'Browser does not make three AI requests')
   tasks[0].stage='quiz';tasks[0].status='queued';tasks[0].completed_kinds=['note','deck'];tasks[0].message='Preparing your remaining study materials…'
   for(const kind of ['note','deck'])assets.push({id:crypto.randomUUID(),folder_id:folderId,kind,set_number:1,created_at:new Date().toISOString()})

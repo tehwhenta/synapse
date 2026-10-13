@@ -17,7 +17,7 @@ before(async () => {
   dom.window.Range.prototype.getBoundingClientRect = () => ({left:0,right:0,top:0,bottom:0,width:0,height:0})
   rich = { ...await import('../src/lib/richText.js'), ...await import('../src/lib/studyRendering.js') }
   const utils = await import('@vue/test-utils'); mount = utils.mount; flushPromises = utils.flushPromises
-  const compiled = await build({ stdin:{ contents:"export {default as App} from './src/App.vue'; export {default as SpaceList} from './src/components/SpaceList.vue'; export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {default as GenerationProgress} from './src/components/GenerationProgress.vue'; export {default as ManualDeckDialog} from './src/components/ManualDeckDialog.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
+  const compiled = await build({ stdin:{ contents:"export {default as App} from './src/App.vue'; export {default as SpaceList} from './src/components/SpaceList.vue'; export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {default as GenerationProgress} from './src/components/GenerationProgress.vue'; export {default as GenerationPerformance} from './src/components/GenerationPerformance.vue'; export {default as ManualDeckDialog} from './src/components/ManualDeckDialog.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
     {name:'vue-test',setup(builder){builder.onLoad({filter:/\.vue$/},args=>{const {descriptor}=parse(readFileSync(args.path,'utf8'));return {contents:compileScript(descriptor,{id:args.path,inlineTemplate:true}).content,loader:'js',resolveDir:dirname(args.path)}})}}
   ] })
   // Download-style asset glob is a build-time feature, irrelevant to these DOM interaction tests.
@@ -25,6 +25,19 @@ before(async () => {
   writeFileSync(runtimePath,source); runtime = await import(pathToFileURL(runtimePath).href)
 })
 after(() => { dom.window.close(); try {unlinkSync(runtimePath)} catch {} })
+
+test('Admin generation timings distinguish waiting, uncached source reading, provider responses and retries without clutter',async()=>{
+ const empty={capacity:{overall:3,per_user:2},totals:{measured:0},window_days:7,sample_limit:2000,stages:[],recent:[]}
+ const wrapper=mount(runtime.GenerationPerformance,{props:{data:empty}})
+ assert.match(wrapper.text(),/3 tasks overall/);assert.match(wrapper.text(),/up to 2 per account/);assert.match(wrapper.text(),/Timings will appear/)
+ const measured={...empty,totals:{measured:5,queue_wait_ms:12000,source_read_ms:1200,gemini_ms:22000,draft_retries:2,provider_retries:1,worker_retries:1,source_cached:3,source_checks:5,input_tokens:1000,output_tokens:600,thought_tokens:20},stages:[{stage:'note',measured:2,queue_wait_ms:5000,dispatch_wait_ms:300,source_read_ms:null,gemini_ms:22000,save_ms:100}],recent:[{title:'Queues.docx',stage:'note',outcome:'saved',queue_wait_ms:5000,gemini_ms:22000,draft_retries:1,provider_retries:0,attempt:1}]}
+ await wrapper.setProps({data:measured})
+ assert.match(wrapper.text(),/12.0 s/);assert.match(wrapper.text(),/22.0 s/);assert.match(wrapper.text(),/2 draft corrections/);assert.match(wrapper.text(),/1 service retries/)
+ assert.equal(wrapper.find('details').attributes('open'),undefined)
+ assert.equal(wrapper.find('.timing-table').attributes('tabindex'),'0')
+ assert.equal(wrapper.findAll('tbody tr').length,1);assert.match(wrapper.text(),/Queues.docx/);assert.doesNotMatch(wrapper.text(),/NaN|undefined/)
+ wrapper.unmount()
+})
 
 test('Highlights, text annotations, and freehand pen settings survive serialization safely',async () => {
   const wrapper=mount(runtime.RichEditor,{props:{modelValue:'<p>A coefficient multiplies a variable.</p>'},attachTo:document.body})

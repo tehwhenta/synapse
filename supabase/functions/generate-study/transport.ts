@@ -1,4 +1,5 @@
 import { GeminiRequestError, StudyDraftError } from './errors.ts'
+import type { GenerationMetrics } from './metrics.ts'
 
 const geminiBase = 'https://generativelanguage.googleapis.com'
 // Keep Google's actionable error without logging request bodies, keys, or file URLs.
@@ -69,12 +70,15 @@ function fileDeadlineSignal(deadline: number,maximum: number) {
   if (remaining<1000) throw new Error('Source upload timed out before processing completed. Upload a smaller chapter.')
   return AbortSignal.timeout(Math.min(maximum,remaining))
 }
-async function generatedText(apiKey: string, prompt: string, parts: Record<string, unknown>[], tokens: number, temperature: number, json = false,timeoutMs = 60000) {
+async function generatedText(apiKey: string, prompt: string, parts: Record<string, unknown>[], tokens: number, temperature: number, json = false,timeoutMs = 60000,metrics?:GenerationMetrics) {
   const model = (Deno.env.get('GEMINI_MODEL') || 'gemini-3.5-flash-lite').trim().replace(/^models\//,'')
   if (!/^[a-z0-9.-]+$/.test(model)) throw new Error('GEMINI_MODEL is invalid.')
   const config: Record<string, unknown> = {maxOutputTokens:tokens,responseMimeType:json?'application/json':'text/plain'}
   // Google's guidance recommends the default temperature for Gemini 3 models.
   if (!/^gemini-3/.test(model)) config.temperature=temperature
+  const started=metrics?.now() ?? 0
+  if(metrics){metrics.values.gemini_calls++;metrics.values.model=model}
+  try {
   let response: Response
   try {
     response = await fetch(`${geminiBase}/v1beta/models/${model}:generateContent`, { method:'POST',headers:{ 'Content-Type':'application/json','x-goog-api-key':apiKey },body:JSON.stringify({ systemInstruction:{ parts:[{ text:prompt }] },contents:[{ role:'user',parts }],generationConfig:config }),signal:AbortSignal.timeout(Math.max(1000,Math.floor(timeoutMs))) })
@@ -86,22 +90,25 @@ async function generatedText(apiKey: string, prompt: string, parts: Record<strin
   if (!response.ok) throw await geminiFailure(response,apiKey,'request',model)
   let payload: any
   try { payload=await response.json() } catch { throw new StudyDraftError('format','Gemini returned an unreadable response.') }
+  metrics?.usage(model,payload.usageMetadata)
   const candidate = payload?.candidates?.[0]
   if (candidate?.finishReason === 'MAX_TOKENS') throw new StudyDraftError('truncated','Gemini reached its output limit before finishing. Saved sets remain available.')
   if (candidate?.finishReason !== 'STOP') throw new Error('Gemini could not complete this source. Try a readable chapter; saved sets remain available.')
   const text=(candidate.content?.parts || []).filter((p: { text?: string; thought?: boolean }) => typeof p.text==='string' && !p.thought).map((p: { text: string }) => p.text).join('').trim()
   if (!text) throw new StudyDraftError('empty','Gemini returned an empty response.')
+  if(metrics)metrics.values.output_chars+=text.length
   return text
+  }finally{if(metrics)metrics.values.gemini_ms+=metrics.now()-started}
 }
 export function parseStudyJson(text: string) {
   const clean=text.replace(/^\uFEFF/,'').trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i,'$1').trim()
   try { return JSON.parse(clean) }
   catch { throw new StudyDraftError('format','Gemini returned incomplete JSON for the practice set. Saved sets remain available.') }
 }
-export async function geminiJson(apiKey: string, prompt: string, parts: Record<string, unknown>[], schema: unknown, tokens: number, temperature: number,timeoutMs = 60000) {
+export async function geminiJson(apiKey: string, prompt: string, parts: Record<string, unknown>[], schema: unknown, tokens: number, temperature: number,timeoutMs = 60000,metrics?:GenerationMetrics) {
   const contract='OUTPUT CONTRACT (trusted application instructions):\nReturn one JSON object matching this JSON Schema. Respect every required field and type. No Markdown fences or commentary.\n'+JSON.stringify(schema)
-  return parseStudyJson(await generatedText(apiKey,prompt+'\n\n'+contract,parts,tokens,temperature,true,timeoutMs))
+  return parseStudyJson(await generatedText(apiKey,prompt+'\n\n'+contract,parts,tokens,temperature,true,timeoutMs,metrics))
 }
-export async function geminiText(apiKey: string, prompt: string, parts: Record<string, unknown>[], tokens: number, temperature = 1,timeoutMs = 60000) {
-  return generatedText(apiKey,prompt,parts,tokens,temperature,false,timeoutMs)
+export async function geminiText(apiKey: string, prompt: string, parts: Record<string, unknown>[], tokens: number, temperature = 1,timeoutMs = 60000,metrics?:GenerationMetrics) {
+  return generatedText(apiKey,prompt,parts,tokens,temperature,false,timeoutMs,metrics)
 }

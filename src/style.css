@@ -589,3 +589,19 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .modal .button.primary:focus-visible,.toast-message button:focus-visible { outline:2px solid #b9c89a; outline-offset:3px; }
 @keyframes generation-wait { from {background-position:100% 0} to {background-position:-100% 0} }
 @media(prefers-reduced-motion:reduce){.generation-progress progress {animation:none!important;transition:none!important}}
+
+/* Timing details live in the admin panel and scroll inside narrow viewports. */
+.generation-performance { min-width:0; }
+.timing-metrics { margin:16px 0 10px; }
+.timing-details { margin-top:14px; }
+.timing-details summary { cursor:pointer; font-size:.88rem; color:var(--ink); }
+.timing-details>p { margin:12px 0; }
+.timing-table { max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; border:1px solid var(--line); border-radius:8px; margin-top:12px; }
+.timing-table table { width:100%; border-collapse:collapse; font-size:.8rem; white-space:nowrap; }
+.timing-table th,.timing-table td { padding:10px 12px; text-align:left; border-bottom:1px solid var(--line); }
+.timing-table thead { background:var(--surface); }
+.timing-recent { list-style:none; padding:0; margin:12px 0 0; }
+.timing-recent li { padding:10px 0; border-top:1px solid var(--line); }
+.timing-recent li>div { display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px 12px; }
+.timing-recent strong { overflow-wrap:anywhere; font-size:.84rem; }
+.timing-recent p { margin:4px 0 0; }

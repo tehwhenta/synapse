@@ -31,7 +31,7 @@ before(async()=>{
     grant usage on schema auth,storage,realtime to anon,authenticated,service_role;
     grant select,insert,delete on storage.objects to authenticated; grant select,insert on realtime.messages to authenticated;
     create publication supabase_realtime;`)
-  for(const file of ['001_synapse.sql','003_study_refinements.sql','004_reviewer_accounts.sql','006_system_maintenance.sql','007_admin_email_type.sql','008_guided_generation.sql','009_seeds_and_custom_cards.sql','010_automatic_study.sql','011_generation_reliability.sql','012_generation_queue.sql','014_safe_database_cleanup.sql','015_generation_refinement.sql']) await db.exec(readFileSync(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'))
+  for(const file of ['001_synapse.sql','003_study_refinements.sql','004_reviewer_accounts.sql','006_system_maintenance.sql','007_admin_email_type.sql','008_guided_generation.sql','009_seeds_and_custom_cards.sql','010_automatic_study.sql','011_generation_reliability.sql','012_generation_queue.sql','014_safe_database_cleanup.sql','015_generation_refinement.sql','017_generation_performance.sql']) await db.exec(readFileSync(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'))
   for(const [i,id] of ids.entries()) await db.query('insert into auth.users(id,email,email_confirmed_at,last_sign_in_at) values($1,$2,now(),now())',[id,`guided${i}@example.com`])
 })
 beforeEach(async()=>{await db.exec('delete from private.ai_usage;delete from private.seed_usage')})
@@ -145,11 +145,13 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
   'Transfer: a waiting-line illustration uses FIFO to keep earlier arrivals accessible first, while an undo illustration uses LIFO to reach the latest stored action. Stable sorting is useful when equal records must retain their previous relative order; no additional sorting rule is needed.',
   'Justification and synthesis: rear insertion leaves earlier queue arrivals in front, so front removal maintains FIFO. Stack removal instead selects the latest top. The empty check answers whether removal is possible; the capacity check answers whether another insertion is possible. Correct insertion into the sorted prefix preserves its order.',
  ]
+ const rpcCounts=new Map()
  const client={auth:{getUser:async token=>({data:{user:token==='valid'?{id:ids[0]}:null},error:null})},storage:{from:()=>({download:async()=>{downloads++;return {data:pdf,error:null}}})},from:table=>{
   let id,values
   const query={select(){return this},eq(key,value){if(key==='id')id=value;return this},update(value){values=value;return this},async single(){return {data:(await backend('select * from public.'+table+' where id=$1',[id])).rows[0],error:null}},then(resolve,reject){return backend('update public.document_files set status=$2,error_message=$3 where id=$1',[id,values.status,values.error_message]).then(value=>resolve({data:value.rows,error:null}),reject)}}
   return query
  },rpc:async(name,args={})=>{
+  rpcCounts.set(name,(rpcCounts.get(name)||0)+1)
   try{
    const entries=Object.entries(args)
    const result=await backend('select to_jsonb(public.'+name+'('+entries.map(([key],i)=>key+'=>$'+(i+1)).join(',')+')) value',entries.map(([,value])=>value&&typeof value==='object'?JSON.stringify(value):value))
@@ -204,7 +206,6 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
   await work();assert.equal(scanDrafts,2);assert.equal(downloads,1)
   const first={}
   for(const kind of ['note','deck','quiz']){
-   if(!(await db.query('select id from public.study_assets where material_id=$1 and kind=$2',[m.id,kind])).rows.length)await work()
    if(kind==='quiz'){
     const waiting=(await db.query('select status,stage,completed_kinds from private.generation_queue where id=$1',[initial.id])).rows[0]
     assert.equal(waiting.status,'queued');assert.equal(waiting.stage,'quiz');assert.deepEqual(waiting.completed_kinds,['note','deck'])
@@ -212,8 +213,9 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
     await db.exec('update private.generation_capacity set cooldown_until=null');await db.query('update private.generation_queue set available_at=now() where id=$1',[initial.id])
     await work()
    }
+   if(!(await db.query('select id from public.study_assets where material_id=$1 and kind=$2',[m.id,kind])).rows.length)await work()
    const asset=(await db.query('select * from public.study_assets where material_id=$1 and kind=$2',[m.id,kind])).rows[0]
-   assert.equal(asset.set_number,1);first[kind]=asset.id;callCounts.push(draftCount)
+   assert.equal(asset.set_number,1);first[kind]=asset.id;callCounts.push((await db.query("select gemini_calls from private.generation_runs where task_id=$1 and stage=$2 and outcome='saved'",[initial.id,kind])).rows[0].gemini_calls)
   }
   assert.equal((await db.query('select status from private.generation_queue where id=$1',[initial.id])).rows[0].status,'completed')
   await user(0,'select public.review_card($1,0,3)',[first.deck])
@@ -223,9 +225,12 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
    const task=(await db.query('select * from private.generation_queue where id=$1',[queued.id])).rows[0]
    assert.equal(task.status,'completed',kind+', click '+click+': '+task.last_error)
    const asset=(await db.query('select set_number from public.study_assets where id=$1',[task.result_asset_id])).rows[0]
-   assert.equal(asset.set_number,click+1);callCounts.push(draftCount)
+   assert.equal(asset.set_number,click+1);callCounts.push((await db.query("select gemini_calls from private.generation_runs where task_id=$1 and outcome='saved'",[queued.id])).rows[0].gemini_calls)
   }
   assert.equal(claimCount,19);assert.deepEqual(callCounts,Array(18).fill(2));assert.equal(downloads,1)
+  assert.equal(rpcCounts.get('generation_source'),1,'Prepared stages skip repeated source/database reads')
+  assert.equal(rpcCounts.get('claim_queued_source'),1,'Only initial preparation claims a source scan')
+  assert.equal((await db.query("select count(*)::int n from private.generation_runs where outcome='saved' and draft_retries=1")).rows[0].n,19,'Source extraction and all saved outputs report their draft corrections')
   assert.equal((await db.query('select count(*)::int n from public.study_assets where material_id=$1',[m.id])).rows[0].n,18)
   assert.equal((await db.query("select count(*)::int n from private.material_jobs where material_id=$1 and status='completed'",[m.id])).rows[0].n,18)
   assert.equal((await db.query('select count(*)::int n from public.flashcard_progress where asset_id=$1',[first.deck])).rows[0].n,1)

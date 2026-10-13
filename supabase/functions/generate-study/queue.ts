@@ -2,6 +2,9 @@ import { executeGeneration } from './engine.ts'
 import { GeminiRequestError, StudyDraftError } from './errors.ts'
 import { generationRequestBudgetMs } from './reliable.ts'
 import { UploadReadError, unreadableUploadMessage } from '../_shared/uploadTypes.ts'
+import { GenerationMetrics, reportGenerationMetrics } from './metrics.ts'
+
+export const minimumContinuationBudgetMs=70000
 
 export function queueRecovery(error: unknown, attempts: number) {
  const message=error instanceof Error?error.message:String(error)
@@ -25,28 +28,34 @@ export async function runQueuedGeneration(admin: any, ticket: any) {
  if(claimed.error)throw claimed.error
  let task=claimed.data
  if(!task)return {idle:true}
- // A fast preparation can hand off directly to its next stage under the SAME
- // total request budget. SQL still reserves a slot and fences the new lease.
- for(let stage=0;stage<2;stage++){
+ // Reuse a warm worker while a full draft plus saving time still fits. The
+ // original 130-second deadline, account cap, material guard and FIFO fairness
+ // apply to EVERY continuation; no parallel provider calls inside one task.
+ for(let stage=0;stage<4;stage++){
+  const metrics=new GenerationMetrics()
+  let succeeded=false
   try {
    const input:any={action:task.stage==='prepare'?'prepare':'generate',text:task.source_text}
    if(task.document_id){input.document_id=task.document_id;input.kind=task.stage;input.initial=true}
    else input.asset_id=task.asset_id
-   await executeGeneration(admin,task.user_id,input,task,deadline)
+   await executeGeneration(admin,task.user_id,input,task,deadline,metrics)
    if(task.stage==='prepare'){
     const done=await admin.rpc('finish_generation_prepare',{p_task_id:task.id,p_lease:task.lease_token})
     if(done.error)throw done.error
-    if(deadline-Date.now()>=100000){
-     const next=await admin.rpc('continue_generation_task',{p_task_id:task.id,p_previous_lease:task.lease_token})
-     if(!next.error && next.data){task=next.data;continue}
-    }
    }
+   succeeded=true
   } catch(error) {
    const recovery=queueRecovery(error,task.attempts)
    const message=error instanceof Error?error.message:(error as any)?.message || 'Worker interrupted'
    console.error('Queued generation:',task.id,message.slice(0,500))
    const deferred=await admin.rpc('defer_generation_task',{p_task_id:task.id,p_lease:task.lease_token,p_error:message,p_retry_seconds:recovery.seconds,p_message:recovery.message,p_provider_busy:recovery.providerBusy})
    if(deferred.error)throw deferred.error
+  } finally {
+   await reportGenerationMetrics(admin,task,metrics)
+  }
+  if(succeeded && stage<3 && (task.stage==='prepare' || task.document_id && !task.kind) && deadline-Date.now()>=minimumContinuationBudgetMs){
+   const next=await admin.rpc('continue_generation_task',{p_task_id:task.id,p_previous_lease:task.lease_token})
+   if(!next.error && next.data){task=next.data;continue}
   }
   break
  }

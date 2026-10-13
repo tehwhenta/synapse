@@ -1,3 +1,5 @@
+> For the current 1.8.2 update and 3/2 concurrency, use [GENERATION_PERFORMANCE_SETUP.md](GENERATION_PERFORMANCE_SETUP.md). The setup below is historical.
+
 > Initial 1.8 installation guide. For the current update, follow [GENERATION_REFINEMENT_SETUP.md](GENERATION_REFINEMENT_SETUP.md). Do not run 013 after 016; it would restore the older minute schedule.
 
 # Synapse 1.8 — generation queue and database care

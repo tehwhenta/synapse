@@ -1,6 +1,6 @@
-# Current update: Synapse 1.8.1
+# Current update: Synapse 1.8.2
 
-Follow [GENERATION_REFINEMENT_SETUP.md](GENERATION_REFINEMENT_SETUP.md) for faster generation, automatic pause recovery, readable-file validation, focused reviewer prompts and visible progress. If 1.8 already works, run only 015, redeploy generate-study, then run 016 and deploy the matching frontend. Keep earlier successful migrations intact.
+Follow [GENERATION_PERFORMANCE_SETUP.md](GENERATION_PERFORMANCE_SETUP.md) for 3 concurrent tasks overall, up to 2 per account, faster cached-source stages and private admin timing measurements. If 1.8.1 works, run 017, redeploy generate-study, then deploy the matching frontend. Keep the existing 15-second queue schedule and earlier successful migrations.
 
 # Upgrade your existing Synapse project to 1.6
 

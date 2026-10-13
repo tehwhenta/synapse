@@ -193,6 +193,44 @@ export class GeminiRequestError extends Error {
   }
 }
 
+// Timings only: never retain source text, prompts, answers, URLs, or API keys.
+export class GenerationMetrics {
+ values = {
+  source_read_ms:0, gemini_ms:0, save_ms:0, validation_ms:0,
+  gemini_calls:0, draft_retries:0, provider_retries:0,
+  source_cached:false, source_chars:0, output_chars:0,
+  input_tokens:0, output_tokens:0, thought_tokens:0, model:'',
+ }
+ constructor(public now:()=>number = ()=>performance.now()) {}
+ async time<T>(key:'save_ms' | 'validation_ms',action:()=>T | Promise<T>):Promise<T> {
+  const start=this.now()
+  try {return await action()} finally {this.values[key]+=this.now()-start}
+ }
+ usage(model:string,usage:any) {
+  this.values.model=model
+  for(const [key,field] of [['input_tokens','promptTokenCount'],['output_tokens','candidatesTokenCount'],['thought_tokens','thoughtsTokenCount']] as const){
+   const value=usage?.[field]
+   if(typeof value==='number' && Number.isFinite(value) && value>=0)this.values[key]+=value
+  }
+ }
+ snapshot() {
+  return Object.fromEntries(Object.entries(this.values).map(([key,value])=>[key,typeof value==='number'?Math.max(0,Math.min(key.endsWith('_ms')?150000:key.endsWith('_retries') || key==='gemini_calls'?20:key.endsWith('_tokens')?10000000:1000000,Math.round(value))):value]))
+ }
+}
+
+export async function reportGenerationMetrics(admin:any,task:any,metrics:GenerationMetrics) {
+ const data=metrics.snapshot()
+ // Structured logs remain useful if the timing write is unavailable. Reporting
+ // must never turn a saved set into a failure or request another Gemini draft.
+ console.info(JSON.stringify({event:'generation_timing',task_id:task.id,stage:task.stage,attempt:task.attempts,...data}))
+ try {
+  const request=admin.rpc('record_generation_metrics',{p_task_id:task.id,p_lease:task.lease_token,p_metrics:data})
+  if(typeof request.abortSignal==='function')request.abortSignal(AbortSignal.timeout(2000))
+  const result=await request
+  if(result.error)console.warn('Generation timing report unavailable')
+ }catch {console.warn('Generation timing report unavailable')}
+}
+
 
 const geminiBase = 'https://generativelanguage.googleapis.com'
 // Keep Google's actionable error without logging request bodies, keys, or file URLs.
@@ -263,12 +301,15 @@ function fileDeadlineSignal(deadline: number,maximum: number) {
   if (remaining<1000) throw new Error('Source upload timed out before processing completed. Upload a smaller chapter.')
   return AbortSignal.timeout(Math.min(maximum,remaining))
 }
-async function generatedText(apiKey: string, prompt: string, parts: Record<string, unknown>[], tokens: number, temperature: number, json = false,timeoutMs = 60000) {
+async function generatedText(apiKey: string, prompt: string, parts: Record<string, unknown>[], tokens: number, temperature: number, json = false,timeoutMs = 60000,metrics?:GenerationMetrics) {
   const model = (Deno.env.get('GEMINI_MODEL') || 'gemini-3.5-flash-lite').trim().replace(/^models\//,'')
   if (!/^[a-z0-9.-]+$/.test(model)) throw new Error('GEMINI_MODEL is invalid.')
   const config: Record<string, unknown> = {maxOutputTokens:tokens,responseMimeType:json?'application/json':'text/plain'}
   // Google's guidance recommends the default temperature for Gemini 3 models.
   if (!/^gemini-3/.test(model)) config.temperature=temperature
+  const started=metrics?.now() ?? 0
+  if(metrics){metrics.values.gemini_calls++;metrics.values.model=model}
+  try {
   let response: Response
   try {
     response = await fetch(`${geminiBase}/v1beta/models/${model}:generateContent`, { method:'POST',headers:{ 'Content-Type':'application/json','x-goog-api-key':apiKey },body:JSON.stringify({ systemInstruction:{ parts:[{ text:prompt }] },contents:[{ role:'user',parts }],generationConfig:config }),signal:AbortSignal.timeout(Math.max(1000,Math.floor(timeoutMs))) })
@@ -280,24 +321,27 @@ async function generatedText(apiKey: string, prompt: string, parts: Record<strin
   if (!response.ok) throw await geminiFailure(response,apiKey,'request',model)
   let payload: any
   try { payload=await response.json() } catch { throw new StudyDraftError('format','Gemini returned an unreadable response.') }
+  metrics?.usage(model,payload.usageMetadata)
   const candidate = payload?.candidates?.[0]
   if (candidate?.finishReason === 'MAX_TOKENS') throw new StudyDraftError('truncated','Gemini reached its output limit before finishing. Saved sets remain available.')
   if (candidate?.finishReason !== 'STOP') throw new Error('Gemini could not complete this source. Try a readable chapter; saved sets remain available.')
   const text=(candidate.content?.parts || []).filter((p: { text?: string; thought?: boolean }) => typeof p.text==='string' && !p.thought).map((p: { text: string }) => p.text).join('').trim()
   if (!text) throw new StudyDraftError('empty','Gemini returned an empty response.')
+  if(metrics)metrics.values.output_chars+=text.length
   return text
+  }finally{if(metrics)metrics.values.gemini_ms+=metrics.now()-started}
 }
 export function parseStudyJson(text: string) {
   const clean=text.replace(/^\uFEFF/,'').trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i,'$1').trim()
   try { return JSON.parse(clean) }
   catch { throw new StudyDraftError('format','Gemini returned incomplete JSON for the practice set. Saved sets remain available.') }
 }
-export async function geminiJson(apiKey: string, prompt: string, parts: Record<string, unknown>[], schema: unknown, tokens: number, temperature: number,timeoutMs = 60000) {
+export async function geminiJson(apiKey: string, prompt: string, parts: Record<string, unknown>[], schema: unknown, tokens: number, temperature: number,timeoutMs = 60000,metrics?:GenerationMetrics) {
   const contract='OUTPUT CONTRACT (trusted application instructions):\nReturn one JSON object matching this JSON Schema. Respect every required field and type. No Markdown fences or commentary.\n'+JSON.stringify(schema)
-  return parseStudyJson(await generatedText(apiKey,prompt+'\n\n'+contract,parts,tokens,temperature,true,timeoutMs))
+  return parseStudyJson(await generatedText(apiKey,prompt+'\n\n'+contract,parts,tokens,temperature,true,timeoutMs,metrics))
 }
-export async function geminiText(apiKey: string, prompt: string, parts: Record<string, unknown>[], tokens: number, temperature = 1,timeoutMs = 60000) {
-  return generatedText(apiKey,prompt,parts,tokens,temperature,false,timeoutMs)
+export async function geminiText(apiKey: string, prompt: string, parts: Record<string, unknown>[], tokens: number, temperature = 1,timeoutMs = 60000,metrics?:GenerationMetrics) {
+  return generatedText(apiKey,prompt,parts,tokens,temperature,false,timeoutMs,metrics)
 }
 
 export type SourceConcept = {id:string;label:string;topic_id:string}
@@ -488,6 +532,7 @@ type DraftPipeline<T,R> = {
   task?: 'source' | 'note' | 'deck' | 'quiz'
   now?: () => number
   pause?: (milliseconds: number) => Promise<void>
+  metrics?: GenerationMetrics
 }
 function correctableSaveError(error: unknown) {
   // These SQL exceptions abort the transaction before any set/history is saved.
@@ -517,21 +562,23 @@ function revisionInstructions(error: StudyDraftError,raw: any,task?: string) {
 export async function runDraftPipeline<T,R>(options: DraftPipeline<T,R>): Promise<R> {
   const now = options.now ?? Date.now
   const pause = options.pause ?? (ms => new Promise(resolve => setTimeout(resolve,ms)))
-  let revision = '',lastError: Error | undefined
+  let revision = '',lastError: Error | undefined,retryKind:'draft' | 'provider' | undefined
   for (let draft=0;draft<maximumDrafts;draft++) {
     const remaining = options.deadline-now()-5000 // Leave time for saving/responding.
     if (remaining < 8000) throw lastError ?? new Error('Generation timed out before a complete set could be saved. Earlier sets remain available.')
     let raw: unknown
     try {
+      if(retryKind && options.metrics)options.metrics.values[retryKind==='draft'?'draft_retries':'provider_retries']++
       raw=await options.generate(revision,Math.min(60000,remaining))
-      const output=options.validate(raw)
-      try { return await options.save(output) }
+      const output=options.metrics?await options.metrics.time('validation_ms',()=>options.validate(raw)):options.validate(raw)
+      try { return options.metrics?await options.metrics.time('save_ms',()=>options.save(output)):await options.save(output) }
       catch (error) { throw correctableSaveError(error) ?? error }
     } catch (error) {
       if (error instanceof StudyDraftError) {
         lastError=error
         if (draft===maximumDrafts-1) throw error
         revision=revisionInstructions(error,raw,options.task)
+        retryKind='draft'
         continue
       }
       if (error instanceof GeminiRequestError && (error.status===408 || error.status>=500)) {
@@ -540,6 +587,7 @@ export async function runDraftPipeline<T,R>(options: DraftPipeline<T,R>): Promis
         const delay=Math.min(1000*2**draft+Math.floor(Math.random()*250),2500)
         if (options.deadline-now()-delay < 13000) throw error
         await pause(delay)
+        retryKind='provider'
         continue
       }
       // Invalid API/model/configuration, quota, blocked content, auth/access and
@@ -601,15 +649,27 @@ function sourceText(value: string) {
     .replace(/<[^>]*>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
 }
 
-export async function executeGeneration(admin: any, userId: string, input: any, task?: any, requestDeadline?: number) {
+export async function executeGeneration(admin: any, userId: string, input: any, task?: any, requestDeadline?: number,metrics?:GenerationMetrics) {
  const deadline=requestDeadline ?? Date.now()+generationRequestBudgetMs
  let jobId='',materialId='',analysisToken='',documentId=''
  const apiKey=Deno.env.get('GEMINI_API_KEY') || ''
  if (!apiKey) throw new Error('GEMINI_API_KEY is missing in Supabase Edge Function Secrets.')
  const temporaryFiles: string[]=[]
+ const sourceStarted=metrics?.now() ?? 0,sourceGeminiBefore=metrics?.values.gemini_ms ?? 0
+ let sourceMeasured=false
+ const finishSourceTiming=()=>{
+  if(metrics && !sourceMeasured)metrics.values.source_read_ms+=Math.max(0,metrics.now()-sourceStarted-(metrics.values.gemini_ms-sourceGeminiBefore))
+  sourceMeasured=true
+ }
  const rpc=async(name: string,args: Record<string,unknown>)=>{const result=await admin.rpc(name,args);if(result.error)throw new Error(result.error.message);return result.data}
  try {
     let material: any, doc: any, blob: Blob | null=null, kind=input.kind
+    // A queued stage already has a validated, retained source. Its fenced claim
+    // checks permissions and returns source/history in ONE database call.
+    if(task?.material_id && input.action!=='prepare') {
+      materialId=task.material_id;kind=task.stage;sourceMeasured=true
+      if(metrics)metrics.values.source_cached=true
+    } else {
     if (input.asset_id) {
       const { data:asset,error }=await admin.from('study_assets').select('id,material_id,document_id,kind,is_custom').eq('id',input.asset_id).single()
       if (error || !asset) throw new Error('This study set is unavailable.')
@@ -639,6 +699,7 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
     // fixed counts, Seed claim, or full chapter inside a JSON string is required.
     const scan=task ? await rpc('claim_queued_source',{p_task_id:task.id,p_lease:task.lease_token,p_material_id:materialId}) : await rpc('claim_auto_source',{p_material_id:materialId,p_user_id:userId})
     material=scan.material
+    if(metrics)metrics.values.source_cached=scan.cached===true
     if (!scan.cached) {
       analysisToken=scan.token
       let retained=input.text
@@ -651,8 +712,8 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
       else if (doc.mime_type==='application/pdf' || doc.mime_type.startsWith('image/')) {
         const file=await geminiFilePart(blob,doc.mime_type,apiKey,temporaryFiles,deadline)
         retained=await runDraftPipeline({
-          deadline,task:'source',
-          generate:(revision,timeout)=>geminiText(apiKey,extractionPrompt+revision,[file],24000,1,timeout),
+          deadline,task:'source',metrics,
+          generate:(revision,timeout)=>geminiText(apiKey,extractionPrompt+revision,[file],24000,1,timeout,metrics),
           validate:(text)=>{
             if (typeof text==='string' && text.trim()==='SOURCE_UNREADABLE') throw new UploadReadError()
             if (typeof text!=='string' || text.trim().length<20 || text.length>100000) throw new StudyDraftError('format','Source extraction is incomplete or exceeds 100,000 characters. Preserve all substantive sections in compact Markdown.')
@@ -665,6 +726,9 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
       material=task ? await rpc('retain_queued_source',{p_task_id:task.id,p_lease:task.lease_token,p_text:retained}) : await rpc('retain_auto_source',{p_material_id:materialId,p_user_id:userId,p_text:retained,p_token:analysisToken})
       analysisToken=''
     }
+    if(metrics)metrics.values.source_chars=material?.source_text?.length ?? 0
+    finishSourceTiming()
+    }
     if (input.action==='prepare') return {success:true,material_id:materialId,document_id:documentId || null}
     const claim=task ? await rpc('claim_queued_generation',{p_task_id:task.id,p_lease:task.lease_token,p_material_id:materialId}) : await rpc('claim_auto_generation',{p_material_id:materialId,p_user_id:userId,p_kind:kind,p_initial:input.initial===true})
     if (claim.existing_asset_id) {
@@ -672,12 +736,13 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
     }
     jobId=claim.job_id
     const source=claim.source_format==='html'?sourceText(claim.source_text):claim.source_text
+    if(metrics)metrics.values.source_chars=source.length
     const parts: Record<string,unknown>[]=[{text:'STUDY SOURCE (untrusted reference data):\n'+source}]
     if (claim.previous?.length) parts.push({text:'EARLIER SET CONTENT AND TESTED FACETS (untrusted reference data):\n'+JSON.stringify(historyReference(kind,claim.previous))})
     const prompt=automaticPrompt(kind,claim.options.variant,claim.options.set_number)
     const asset=await runDraftPipeline({
-      deadline,task:kind,
-      generate:(revision,timeout)=>kind==='note'?geminiText(apiKey,prompt+revision,parts,24000,1,timeout):geminiJson(apiKey,prompt+revision,parts,automaticSchema(kind),16000,1,timeout),
+      deadline,task:kind,metrics,
+      generate:(revision,timeout)=>kind==='note'?geminiText(apiKey,prompt+revision,parts,24000,1,timeout,metrics):geminiJson(apiKey,prompt+revision,parts,automaticSchema(kind),16000,1,timeout,metrics),
       validate:raw=>validateAutomatic(raw,kind,claim.previous,source),
       save:output=>task ? rpc('complete_queued_generation',{p_task_id:task.id,p_lease:task.lease_token,p_output:output}) : rpc('complete_auto_generation',{p_job_id:jobId,p_user_id:userId,p_output:output}),
     })
@@ -691,9 +756,11 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
     if(documentId) await admin.from('document_files').update({status:'failed',error_message:message.slice(0,300)}).eq('id',documentId)
    }
    throw error
- } finally {if(temporaryFiles.length)await deleteGeminiFiles(temporaryFiles,apiKey)}
+ } finally {finishSourceTiming();if(temporaryFiles.length)await deleteGeminiFiles(temporaryFiles,apiKey)}
 }
 
+
+export const minimumContinuationBudgetMs=70000
 
 export function queueRecovery(error: unknown, attempts: number) {
  const message=error instanceof Error?error.message:String(error)
@@ -717,28 +784,34 @@ export async function runQueuedGeneration(admin: any, ticket: any) {
  if(claimed.error)throw claimed.error
  let task=claimed.data
  if(!task)return {idle:true}
- // A fast preparation can hand off directly to its next stage under the SAME
- // total request budget. SQL still reserves a slot and fences the new lease.
- for(let stage=0;stage<2;stage++){
+ // Reuse a warm worker while a full draft plus saving time still fits. The
+ // original 130-second deadline, account cap, material guard and FIFO fairness
+ // apply to EVERY continuation; no parallel provider calls inside one task.
+ for(let stage=0;stage<4;stage++){
+  const metrics=new GenerationMetrics()
+  let succeeded=false
   try {
    const input:any={action:task.stage==='prepare'?'prepare':'generate',text:task.source_text}
    if(task.document_id){input.document_id=task.document_id;input.kind=task.stage;input.initial=true}
    else input.asset_id=task.asset_id
-   await executeGeneration(admin,task.user_id,input,task,deadline)
+   await executeGeneration(admin,task.user_id,input,task,deadline,metrics)
    if(task.stage==='prepare'){
     const done=await admin.rpc('finish_generation_prepare',{p_task_id:task.id,p_lease:task.lease_token})
     if(done.error)throw done.error
-    if(deadline-Date.now()>=100000){
-     const next=await admin.rpc('continue_generation_task',{p_task_id:task.id,p_previous_lease:task.lease_token})
-     if(!next.error && next.data){task=next.data;continue}
-    }
    }
+   succeeded=true
   } catch(error) {
    const recovery=queueRecovery(error,task.attempts)
    const message=error instanceof Error?error.message:(error as any)?.message || 'Worker interrupted'
    console.error('Queued generation:',task.id,message.slice(0,500))
    const deferred=await admin.rpc('defer_generation_task',{p_task_id:task.id,p_lease:task.lease_token,p_error:message,p_retry_seconds:recovery.seconds,p_message:recovery.message,p_provider_busy:recovery.providerBusy})
    if(deferred.error)throw deferred.error
+  } finally {
+   await reportGenerationMetrics(admin,task,metrics)
+  }
+  if(succeeded && stage<3 && (task.stage==='prepare' || task.document_id && !task.kind) && deadline-Date.now()>=minimumContinuationBudgetMs){
+   const next=await admin.rpc('continue_generation_task',{p_task_id:task.id,p_previous_lease:task.lease_token})
+   if(!next.error && next.data){task=next.data;continue}
   }
   break
  }
@@ -786,7 +859,7 @@ Deno.serve(async req=>{
    if(!uuid.test(input.request_id) || input.material_id)return respond({error:'A request ID and uploaded file or study set are required.'},400)
    const ready=await admin.rpc('generation_queue_ready')
    if(ready.error || !ready.data)return respond({error:'Generation setup is incomplete. The app owner needs to finish the queue setup.'},503)
-   const result=await admin.rpc('enqueue_generation',{p_user_id:user.id,p_request_id:input.request_id,p_document_id:input.document_id || null,p_asset_id:input.asset_id || null,p_text:input.text || null})
+   const result=await admin.rpc('enqueue_generation',{p_user_id:user.id,p_request_id:input.request_id,p_document_id:input.document_id || null,p_asset_id:input.asset_id || null,p_text:input.text || null,p_intake:input.intake || null})
    if(result.error)throw result.error
    // A failed kick cannot lose an accepted task: cron will pick it up.
    await admin.rpc('dispatch_generation_queue')

@@ -1,4 +1,5 @@
 import { GeminiRequestError, StudyDraftError } from './errors.ts'
+import type { GenerationMetrics } from './metrics.ts'
 
 export const generationRequestBudgetMs = 130000
 export const maximumDrafts = 3
@@ -10,6 +11,7 @@ type DraftPipeline<T,R> = {
   task?: 'source' | 'note' | 'deck' | 'quiz'
   now?: () => number
   pause?: (milliseconds: number) => Promise<void>
+  metrics?: GenerationMetrics
 }
 function correctableSaveError(error: unknown) {
   // These SQL exceptions abort the transaction before any set/history is saved.
@@ -39,21 +41,23 @@ function revisionInstructions(error: StudyDraftError,raw: any,task?: string) {
 export async function runDraftPipeline<T,R>(options: DraftPipeline<T,R>): Promise<R> {
   const now = options.now ?? Date.now
   const pause = options.pause ?? (ms => new Promise(resolve => setTimeout(resolve,ms)))
-  let revision = '',lastError: Error | undefined
+  let revision = '',lastError: Error | undefined,retryKind:'draft' | 'provider' | undefined
   for (let draft=0;draft<maximumDrafts;draft++) {
     const remaining = options.deadline-now()-5000 // Leave time for saving/responding.
     if (remaining < 8000) throw lastError ?? new Error('Generation timed out before a complete set could be saved. Earlier sets remain available.')
     let raw: unknown
     try {
+      if(retryKind && options.metrics)options.metrics.values[retryKind==='draft'?'draft_retries':'provider_retries']++
       raw=await options.generate(revision,Math.min(60000,remaining))
-      const output=options.validate(raw)
-      try { return await options.save(output) }
+      const output=options.metrics?await options.metrics.time('validation_ms',()=>options.validate(raw)):options.validate(raw)
+      try { return options.metrics?await options.metrics.time('save_ms',()=>options.save(output)):await options.save(output) }
       catch (error) { throw correctableSaveError(error) ?? error }
     } catch (error) {
       if (error instanceof StudyDraftError) {
         lastError=error
         if (draft===maximumDrafts-1) throw error
         revision=revisionInstructions(error,raw,options.task)
+        retryKind='draft'
         continue
       }
       if (error instanceof GeminiRequestError && (error.status===408 || error.status>=500)) {
@@ -62,6 +66,7 @@ export async function runDraftPipeline<T,R>(options: DraftPipeline<T,R>): Promis
         const delay=Math.min(1000*2**draft+Math.floor(Math.random()*250),2500)
         if (options.deadline-now()-delay < 13000) throw error
         await pause(delay)
+        retryKind='provider'
         continue
       }
       // Invalid API/model/configuration, quota, blocked content, auth/access and

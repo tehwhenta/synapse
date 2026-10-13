@@ -257,16 +257,20 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const folderId=selectedFolderId.value,userId=auth.user.id
     try {
       uploadLabel.value = 'Reading your document…'
+      const readingStarted=performance.now()
       const text = await extractOfficeText(file)
+      const readMs=Math.min(3600000,Math.max(0,Math.round(performance.now()-readingStarted)))
       if(auth.user?.id!==userId)throw new Error('Your account changed before the upload finished.')
       documentId = crypto.randomUUID()
       const path = `${folderId}/${auth.user.id}/${documentId}.${file.name.split('.').pop().toLowerCase()}`
+      const uploadStarted=performance.now()
       check(await supabase.from('document_files').insert({ id: documentId, folder_id: folderId, uploaded_by: auth.user.id, name: file.name.slice(0, 200), storage_path: path, mime_type: fileType(file.name), size_bytes: file.size }))
       uploadLabel.value = 'Uploading privately…'
       check(await supabase.storage.from('study-files').upload(path, file, { contentType: fileType(file.name), upsert: false }))
+      const uploadMs=Math.min(3600000,Math.max(0,Math.round(performance.now()-uploadStarted)))
       if(auth.user?.id!==userId)throw new Error('Your account changed before the upload finished.')
       uploadLabel.value = 'Reading your study material…'
-      return await enqueueGeneration({document_id:documentId,text})
+      return await enqueueGeneration({document_id:documentId,text,intake:{read_ms:readMs,upload_ms:uploadMs}})
     } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {}) }
   }
   async function retryDocument(doc) {

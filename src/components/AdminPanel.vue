@@ -5,12 +5,14 @@ import { supabase } from '../lib/supabase'
 import { bytes } from '../lib/utils'
 import Icon from './Icon.vue'
 import Modal from './Modal.vue'
+import GenerationPerformance from './GenerationPerformance.vue'
 const props = defineProps({ visible: Boolean })
 const emit = defineEmits(['notify'])
 const auth = useAuthStore()
 const summary = ref(null), accounts = ref([]), days = ref(90), page = ref(0), more = ref(false), selected = ref([])
 const cleanupPreview=ref(null),cleanupSelection=ref([]),reviewCleanup=ref(false)
-const cleanupCategories=[{key:'invitations',label:'Expired invitations',detail:'Expired more than 30 days ago'},{key:'activity',label:'Old activity feed',detail:'Older than 90 days; keeps messages and study progress'},{key:'jobs',label:'Finished technical jobs',detail:'Completed queue entries older than 14 days; other inactive jobs older than 30 days'},{key:'usage',label:'Retired usage counters',detail:'Older than 60 days'},{key:'audits',label:'Old maintenance logs',detail:'Older than 180 days'},{key:'duplicate_text',label:'Duplicate upload text',detail:'Expired uploads with an exact retained source copy'}]
+const performanceData=ref(null),performanceError=ref('')
+const cleanupCategories=[{key:'invitations',label:'Expired invitations',detail:'Expired more than 30 days ago'},{key:'activity',label:'Old activity feed',detail:'Older than 90 days; keeps messages and study progress'},{key:'jobs',label:'Finished technical jobs',detail:'Completed queue entries older than 14 days; other inactive jobs older than 30 days'},{key:'usage',label:'Retired usage counters',detail:'Older than 60 days'},{key:'audits',label:'Old maintenance logs',detail:'Older than 180 days'},{key:'duplicate_text',label:'Duplicate upload text',detail:'Expired uploads with an exact retained source copy'},{key:'timings',label:'Old generation timings',detail:'Older than 14 days; also cleared by scheduled maintenance'}]
 const loading = ref(false), busy = ref(false), error = ref(''), reviewing = ref(false), confirmation = ref('')
 let version = 0, lastLoaded = 0
 const selectedAccounts = computed(() => accounts.value.filter(a => selected.value.includes(a.user_id)))
@@ -26,13 +28,16 @@ async function load() {
   if (auth.demo || !auth.isAdmin || loading.value) return
   const current = ++version; loading.value = true; error.value = ''
   try {
-    const [totals, users, records] = await Promise.all([
+    const [totals, users, records, timings] = await Promise.all([
       supabase.rpc('admin_system_summary'),
       supabase.rpc('admin_inactive_accounts', { p_days: days.value, p_offset: page.value * 25, p_limit: 26 }),
       supabase.rpc('admin_cleanup_preview'),
+      supabase.rpc('admin_generation_performance').then(result=>result,error=>({error})),
     ])
     if (current !== version || !auth.isAdmin) return
     cleanupPreview.value=value(records);summary.value = value(totals); const rows = value(users)
+    performanceData.value=timings.error?null:timings.data
+    performanceError.value=timings.error?'Generation timings are unavailable. Complete GENERATION_PERFORMANCE_SETUP.md in the project update.':''
     more.value = rows.length > 25; accounts.value = rows.slice(0, 25); selected.value = []; lastLoaded = Date.now()
   } catch (err) { if (current === version) error.value = err.message || 'Maintenance information is unavailable.' }
   finally { if (current === version) loading.value = false }
@@ -88,7 +93,7 @@ async function cancel(account) {
   finally { busy.value = false }
 }
 watch(() => [props.visible, auth.isAdmin], ([visible, admin]) => {
-  if (!admin) { ++version; summary.value = null; accounts.value = []; selected.value = []; reviewing.value = false; loading.value = false }
+  if (!admin) { ++version; summary.value = null; cleanupPreview.value=null;performanceData.value=null;performanceError.value='';accounts.value = []; selected.value = []; reviewing.value = false; loading.value = false }
   else if (visible && (!summary.value || Date.now() - lastLoaded > 60000)) void load()
 }, { immediate: true })
 onBeforeUnmount(() => { ++version })
@@ -104,7 +109,9 @@ onBeforeUnmount(() => { ++version })
       <p class="tiny muted admin-usage-note">These are database size and stored-object estimates, checked {{ checked }}. <a :href="projectUrl" target="_blank" rel="noopener noreferrer">Open Supabase</a> for billed usage, bandwidth, active-user totals, and Realtime limits.</p>
       <section class="maintenance-card"><div><h2>Clear expired files</h2><p>{{ summary.expired_files }} expired uploads · {{ summary.queued_files }} files from deleted spaces awaiting cleanup.</p><p class="tiny muted">The same cleanup also completes due account removals and clears old technical records. Saved reviewers, flashcards, quizzes, messages, and practice history are preserved unless their account or space is being deleted.</p><p class="tiny muted">Last completed: {{ summary.cleanup?.last_finished_at ? new Date(summary.cleanup.last_finished_at).toLocaleString() : 'No recorded run yet' }}.</p><p v-if="summary.cleanup?.result?.errors?.length" class="error-text tiny">Some tasks failed on the last run. They will retry; check the function logs if failures continue.</p></div><button class="button secondary" :disabled="busy || loading" @click="cleanup"><Icon name="RotateCcw" :size="17" />{{ busy ? 'Working…' : 'Run cleanup now' }}</button></section>
       <section v-if="cleanupPreview" class="inactive-section"><h2>Clear temporary database records</h2><p class="muted">Choose what to clear. Each cleanup runs in small batches so normal study work can continue.</p><div class="cleanup-options"><label v-for="item in cleanupCategories" :key="item.key" class="cleanup-option"><input v-model="cleanupSelection" type="checkbox" :value="item.key" :disabled="busy || !cleanupPreview[item.key]" /><span><strong>{{ item.label }}</strong><small class="muted">{{ item.detail }}</small><small>{{ cleanupPreview[item.key] > 1000 ? '1,000+' : cleanupPreview[item.key] || 0 }} eligible records</small></span></label></div><p class="tiny muted">Keeps study sets, custom cards, annotations, source details, messages, and practice history. Supabase can reuse cleared space; its total database size may not drop immediately.</p><button class="button secondary" :disabled="busy || !cleanupSelection.length" @click="reviewCleanup=true">Review cleanup</button></section>
-      <section v-if="cleanupPreview?.queue" class="inactive-section"><h2>Generation queue</h2><p class="muted">{{ cleanupPreview.queue.running }} preparing · {{ cleanupPreview.queue.waiting }} waiting · {{ cleanupPreview.queue.paused }} paused</p><p class="tiny muted">Up to {{ cleanupPreview.queue.parallel }} study stages run at once. Extra work waits safely in the database.</p><p v-if="!cleanupPreview.queue.scheduler_ready" class="error-box">Queue scheduling is not configured. Complete QUEUE_SETUP.md in the project update.</p><div v-for="task in cleanupPreview.paused_tasks" :key="task.id" class="queue-paused-row"><div><strong>{{ task.title }}</strong><p class="tiny muted">{{ task.message }}</p><p v-if="task.auto_resume_at" class="tiny muted">Continues automatically around {{ new Date(task.auto_resume_at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}) }}.</p><details v-if="task.last_error"><summary class="tiny">Service details</summary><p class="tiny">{{ task.last_error }}</p></details></div><button v-if="!task.auto_resume_at && !['source','access','exhausted'].includes(task.pause_reason)" class="button secondary small" :disabled="busy" @click="resumeGeneration(task.id)">Resume after fixing</button></div></section>
+      <section v-if="cleanupPreview?.queue" class="inactive-section"><h2>Generation queue</h2><p class="muted">{{ cleanupPreview.queue.running }} preparing · {{ cleanupPreview.queue.waiting }} waiting · {{ cleanupPreview.queue.paused }} paused</p><p class="tiny muted">Up to {{ cleanupPreview.queue.parallel }} study stages run at once, with {{ cleanupPreview.queue.per_user || 1 }} per account. Extra work waits safely in the database.</p><p v-if="!cleanupPreview.queue.scheduler_ready" class="error-box">Queue scheduling is not configured. Complete QUEUE_SETUP.md in the project update.</p><div v-for="task in cleanupPreview.paused_tasks" :key="task.id" class="queue-paused-row"><div><strong>{{ task.title }}</strong><p class="tiny muted">{{ task.message }}</p><p v-if="task.auto_resume_at" class="tiny muted">Continues automatically around {{ new Date(task.auto_resume_at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}) }}.</p><details v-if="task.last_error"><summary class="tiny">Service details</summary><p class="tiny">{{ task.last_error }}</p></details></div><button v-if="!task.auto_resume_at && !['source','access','exhausted'].includes(task.pause_reason)" class="button secondary small" :disabled="busy" @click="resumeGeneration(task.id)">Resume after fixing</button></div></section>
+      <GenerationPerformance :data="performanceData" />
+      <p v-if="performanceError" class="tiny muted" role="status">{{ performanceError }}</p>
       <section class="inactive-section"><div class="section-heading"><div><h2>Review inactive accounts</h2><p class="muted">Nothing is selected or deleted automatically.</p></div><label class="admin-period">Unused for<select v-model.number="days" :disabled="loading || busy" @change="changeDays"><option :value="90">90 days</option><option :value="180">180 days</option><option :value="365">365 days</option></select></label></div>
         <p class="tiny muted">Select up to 25 accounts, review their impact, then schedule a 7-day recovery window. Signing in or returning before the deadline cancels cleanup. Admins and accounts whose materials belong to spaces used by another person in the last 30 days are protected.</p>
         <div v-if="!accounts.length" class="empty-state"><Icon name="CheckCheck" :size="28" /><h3>No inactive accounts in this period.</h3></div>

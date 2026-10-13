@@ -3,6 +3,7 @@ import { automaticPrompt, automaticSchema, extractionPrompt, historyReference, v
 import { geminiFilePart, geminiJson, geminiText, deleteGeminiFiles } from './transport.ts'
 import { generationRequestBudgetMs, runDraftPipeline } from './reliable.ts'
 import { StudyDraftError } from './errors.ts'
+import type { GenerationMetrics } from './metrics.ts'
 
 // Retained rich notes are reference data, not HTML to execute or instructions to follow.
 function sourceText(value: string) {
@@ -10,15 +11,27 @@ function sourceText(value: string) {
     .replace(/<[^>]*>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
 }
 
-export async function executeGeneration(admin: any, userId: string, input: any, task?: any, requestDeadline?: number) {
+export async function executeGeneration(admin: any, userId: string, input: any, task?: any, requestDeadline?: number,metrics?:GenerationMetrics) {
  const deadline=requestDeadline ?? Date.now()+generationRequestBudgetMs
  let jobId='',materialId='',analysisToken='',documentId=''
  const apiKey=Deno.env.get('GEMINI_API_KEY') || ''
  if (!apiKey) throw new Error('GEMINI_API_KEY is missing in Supabase Edge Function Secrets.')
  const temporaryFiles: string[]=[]
+ const sourceStarted=metrics?.now() ?? 0,sourceGeminiBefore=metrics?.values.gemini_ms ?? 0
+ let sourceMeasured=false
+ const finishSourceTiming=()=>{
+  if(metrics && !sourceMeasured)metrics.values.source_read_ms+=Math.max(0,metrics.now()-sourceStarted-(metrics.values.gemini_ms-sourceGeminiBefore))
+  sourceMeasured=true
+ }
  const rpc=async(name: string,args: Record<string,unknown>)=>{const result=await admin.rpc(name,args);if(result.error)throw new Error(result.error.message);return result.data}
  try {
     let material: any, doc: any, blob: Blob | null=null, kind=input.kind
+    // A queued stage already has a validated, retained source. Its fenced claim
+    // checks permissions and returns source/history in ONE database call.
+    if(task?.material_id && input.action!=='prepare') {
+      materialId=task.material_id;kind=task.stage;sourceMeasured=true
+      if(metrics)metrics.values.source_cached=true
+    } else {
     if (input.asset_id) {
       const { data:asset,error }=await admin.from('study_assets').select('id,material_id,document_id,kind,is_custom').eq('id',input.asset_id).single()
       if (error || !asset) throw new Error('This study set is unavailable.')
@@ -48,6 +61,7 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
     // fixed counts, Seed claim, or full chapter inside a JSON string is required.
     const scan=task ? await rpc('claim_queued_source',{p_task_id:task.id,p_lease:task.lease_token,p_material_id:materialId}) : await rpc('claim_auto_source',{p_material_id:materialId,p_user_id:userId})
     material=scan.material
+    if(metrics)metrics.values.source_cached=scan.cached===true
     if (!scan.cached) {
       analysisToken=scan.token
       let retained=input.text
@@ -60,8 +74,8 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
       else if (doc.mime_type==='application/pdf' || doc.mime_type.startsWith('image/')) {
         const file=await geminiFilePart(blob,doc.mime_type,apiKey,temporaryFiles,deadline)
         retained=await runDraftPipeline({
-          deadline,task:'source',
-          generate:(revision,timeout)=>geminiText(apiKey,extractionPrompt+revision,[file],24000,1,timeout),
+          deadline,task:'source',metrics,
+          generate:(revision,timeout)=>geminiText(apiKey,extractionPrompt+revision,[file],24000,1,timeout,metrics),
           validate:(text)=>{
             if (typeof text==='string' && text.trim()==='SOURCE_UNREADABLE') throw new UploadReadError()
             if (typeof text!=='string' || text.trim().length<20 || text.length>100000) throw new StudyDraftError('format','Source extraction is incomplete or exceeds 100,000 characters. Preserve all substantive sections in compact Markdown.')
@@ -74,6 +88,9 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
       material=task ? await rpc('retain_queued_source',{p_task_id:task.id,p_lease:task.lease_token,p_text:retained}) : await rpc('retain_auto_source',{p_material_id:materialId,p_user_id:userId,p_text:retained,p_token:analysisToken})
       analysisToken=''
     }
+    if(metrics)metrics.values.source_chars=material?.source_text?.length ?? 0
+    finishSourceTiming()
+    }
     if (input.action==='prepare') return {success:true,material_id:materialId,document_id:documentId || null}
     const claim=task ? await rpc('claim_queued_generation',{p_task_id:task.id,p_lease:task.lease_token,p_material_id:materialId}) : await rpc('claim_auto_generation',{p_material_id:materialId,p_user_id:userId,p_kind:kind,p_initial:input.initial===true})
     if (claim.existing_asset_id) {
@@ -81,12 +98,13 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
     }
     jobId=claim.job_id
     const source=claim.source_format==='html'?sourceText(claim.source_text):claim.source_text
+    if(metrics)metrics.values.source_chars=source.length
     const parts: Record<string,unknown>[]=[{text:'STUDY SOURCE (untrusted reference data):\n'+source}]
     if (claim.previous?.length) parts.push({text:'EARLIER SET CONTENT AND TESTED FACETS (untrusted reference data):\n'+JSON.stringify(historyReference(kind,claim.previous))})
     const prompt=automaticPrompt(kind,claim.options.variant,claim.options.set_number)
     const asset=await runDraftPipeline({
-      deadline,task:kind,
-      generate:(revision,timeout)=>kind==='note'?geminiText(apiKey,prompt+revision,parts,24000,1,timeout):geminiJson(apiKey,prompt+revision,parts,automaticSchema(kind),16000,1,timeout),
+      deadline,task:kind,metrics,
+      generate:(revision,timeout)=>kind==='note'?geminiText(apiKey,prompt+revision,parts,24000,1,timeout,metrics):geminiJson(apiKey,prompt+revision,parts,automaticSchema(kind),16000,1,timeout,metrics),
       validate:raw=>validateAutomatic(raw,kind,claim.previous,source),
       save:output=>task ? rpc('complete_queued_generation',{p_task_id:task.id,p_lease:task.lease_token,p_output:output}) : rpc('complete_auto_generation',{p_job_id:jobId,p_user_id:userId,p_output:output}),
     })
@@ -100,5 +118,5 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
     if(documentId) await admin.from('document_files').update({status:'failed',error_message:message.slice(0,300)}).eq('id',documentId)
    }
    throw error
- } finally {if(temporaryFiles.length)await deleteGeminiFiles(temporaryFiles,apiKey)}
+ } finally {finishSourceTiming();if(temporaryFiles.length)await deleteGeminiFiles(temporaryFiles,apiKey)}
 }
