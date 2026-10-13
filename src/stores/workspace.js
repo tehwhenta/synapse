@@ -14,10 +14,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const auth = useAuthStore()
   const folders = ref([]); const assets = ref([]); const documents = ref([]); const members = ref([]); const activities = ref([]); const messages = ref([])
   const attempts = ref([]); const progress = ref([]); const sessions = ref([]); const selectedFolderId = ref(null); const loading = ref(false); const uploading = ref(false); const uploadLabel = ref(''); const error = ref('')
-  const generationTasks = ref([]), generationConnection = ref('')
+  const generationTasks = ref([]), generationConnection = ref(''), recentGeneration=ref(new Set())
+  const generationCompletionTimers=new Map()
   let generationTimer, generationVersion = 0, pollingGeneration = false, generationListening = false
-  const activeGeneration = computed(() => generationTasks.value.filter(t => ['queued','processing'].includes(t.status)))
-  const folderGeneration = computed(() => {const latest=new Map();for(const task of generationTasks.value){const key=task.document_id || task.asset_id;if(!latest.has(key))latest.set(key,task)}return [...latest.values()].filter(t=>t.folder_id===selectedFolderId.value && t.status!=='completed')})
+  const activeGeneration = computed(() => generationTasks.value.filter(t => ['queued','processing'].includes(t.status) || t.status==='paused' && t.auto_resume_at))
+  const folderGeneration = computed(() => {const latest=new Map();for(const task of generationTasks.value){const key=task.document_id || task.asset_id;if(!latest.has(key))latest.set(key,task)}return [...latest.values()].filter(t=>t.folder_id===selectedFolderId.value && (t.status!=='completed' || recentGeneration.value.has(t.id)))})
   const moreAssets = ref(false), moreDocuments = ref(false), personalStats = ref(null)
   const documentColumns = 'id,folder_id,material_id,uploaded_by,name,storage_path,mime_type,size_bytes,status,error_message,processing_started_at,expires_at,purged_at,created_at'
   let changeChannel, folderChannel, reloadTimer, workspaceReloadTimer, loadVersion = 0, folderVersion = 0, subscriptionVersion = 0, workspaceSubscriptionVersion = 0
@@ -181,12 +182,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if (folderId!==selectedFolderId.value) { generationTimer=setTimeout(pollGeneration,0); return }
       const previous=new Map(generationTasks.value.map(t=>[t.id,t]))
       const changed=rows.some(t=>t.folder_id===folderId && t.completed_kinds?.length!==(previous.get(t.id)?.completed_kinds?.length || 0))
+      for(const task of rows){if(task.status==='completed' && previous.has(task.id) && previous.get(task.id).status!=='completed'){recentGeneration.value=new Set([...recentGeneration.value,task.id]);clearTimeout(generationCompletionTimers.get(task.id));generationCompletionTimers.set(task.id,setTimeout(()=>{recentGeneration.value=new Set([...recentGeneration.value].filter(id=>id!==task.id));generationCompletionTimers.delete(task.id)},6000))}}
       generationTasks.value=rows;generationConnection.value=''
       if(changed) await loadFolder(new Set(['study_assets','document_files'])).catch(()=>{})
     } catch {
       if(version===generationVersion) generationConnection.value='Reconnecting to generation status. Accepted work continues on the server.'
     } finally {
-      if(version===generationVersion){pollingGeneration=false;if((activeGeneration.value.length || generationConnection.value) && !globalThis.document?.hidden)generationTimer=setTimeout(pollGeneration,globalThis.navigator?.onLine===false?30000:5000)}
+      if(version===generationVersion){pollingGeneration=false;if((activeGeneration.value.length || generationConnection.value) && !globalThis.document?.hidden)generationTimer=setTimeout(pollGeneration,globalThis.navigator?.onLine===false || activeGeneration.value.every(t=>t.status==='paused')?30000:5000)}
     }
   }
   function wakeGeneration() { if(!globalThis.document?.hidden)void pollGeneration() }
@@ -374,7 +376,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await subscribeFolder()
   }
   async function dispose() {
-    ++generationVersion;clearTimeout(generationTimer);pollingGeneration=false;generationTasks.value=[];generationConnection.value='';globalThis.window?.removeEventListener('online',wakeGeneration);globalThis.document?.removeEventListener('visibilitychange',wakeGeneration);generationListening=false
+    ++generationVersion;for(const timer of generationCompletionTimers.values())clearTimeout(timer);generationCompletionTimers.clear();recentGeneration.value=new Set();clearTimeout(generationTimer);pollingGeneration=false;generationTasks.value=[];generationConnection.value='';globalThis.window?.removeEventListener('online',wakeGeneration);globalThis.document?.removeEventListener('visibilitychange',wakeGeneration);generationListening=false
     ++loadVersion; ++folderVersion; ++subscriptionVersion; ++workspaceSubscriptionVersion; clearTimeout(reloadTimer); reloadTimer = null; clearTimeout(workspaceReloadTimer); reloadTables.clear()
     const channels = [changeChannel,folderChannel]; changeChannel = null; folderChannel = null
     folders.value = []; assets.value = []; selectedFolderId.value = null; members.value = []; messages.value = []; attempts.value = []; sessions.value = []; progress.value = []; documents.value = []; activities.value = []; moreAssets.value = false; moreDocuments.value = false; personalStats.value = null; loading.value = false

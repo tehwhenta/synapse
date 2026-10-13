@@ -31,7 +31,7 @@ before(async()=>{
     grant usage on schema auth,storage,realtime to anon,authenticated,service_role;
     grant select,insert,delete on storage.objects to authenticated; grant select,insert on realtime.messages to authenticated;
     create publication supabase_realtime;`)
-  for(const file of ['001_synapse.sql','003_study_refinements.sql','004_reviewer_accounts.sql','006_system_maintenance.sql','007_admin_email_type.sql','008_guided_generation.sql','009_seeds_and_custom_cards.sql','010_automatic_study.sql','011_generation_reliability.sql','012_generation_queue.sql','014_safe_database_cleanup.sql']) await db.exec(readFileSync(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'))
+  for(const file of ['001_synapse.sql','003_study_refinements.sql','004_reviewer_accounts.sql','006_system_maintenance.sql','007_admin_email_type.sql','008_guided_generation.sql','009_seeds_and_custom_cards.sql','010_automatic_study.sql','011_generation_reliability.sql','012_generation_queue.sql','014_safe_database_cleanup.sql','015_generation_refinement.sql']) await db.exec(readFileSync(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'))
   for(const [i,id] of ids.entries()) await db.query('insert into auth.users(id,email,email_confirmed_at,last_sign_in_at) values($1,$2,now(),now())',[id,`guided${i}@example.com`])
 })
 beforeEach(async()=>{await db.exec('delete from private.ai_usage;delete from private.seed_usage')})
@@ -126,7 +126,7 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
  const source='A queue preserves FIFO ordering. Enqueue adds at the rear, dequeue removes at the front, and peek reads the front without removal. A stack preserves LIFO ordering: push adds at the top and pop removes the top. A bounded container checks capacity before insertion and emptiness before removal. Insertion sort grows a sorted prefix by inserting the next element into its correct position. It is stable when equal items keep their relative order.'
  const pdf=new Blob(['%PDF-1.7 mock provider input'],{type:'application/pdf'})
  await db.query("update public.study_materials set source_text='',source_hash=null where id=$1",[m.id])
- await db.query("update public.document_files set mime_type='application/pdf',size_bytes=$2,status='processing' where id=$1",[m.doc,pdf.size])
+ await db.query("update public.document_files set name='notes.pdf',mime_type='application/pdf',size_bytes=$2,status='processing' where id=$1",[m.doc,pdf.size])
  let handler,current=null,scanDrafts=0,claimCount=0,draftCount=0,downloads=0,permanent=false,quizThrottled=false
  const outputs={note:[],deck:[],quiz:[]},callCounts=[],env={SUPABASE_URL:'https://mock.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'mock-server-only',GEMINI_API_KEY:'mock-only',ALLOWED_ORIGINS:'http://localhost:5173',CRON_SECRET:'test-worker-secret-long'}
  const rows=[
@@ -204,7 +204,7 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
   await work();assert.equal(scanDrafts,2);assert.equal(downloads,1)
   const first={}
   for(const kind of ['note','deck','quiz']){
-   await work()
+   if(!(await db.query('select id from public.study_assets where material_id=$1 and kind=$2',[m.id,kind])).rows.length)await work()
    if(kind==='quiz'){
     const waiting=(await db.query('select status,stage,completed_kinds from private.generation_queue where id=$1',[initial.id])).rows[0]
     assert.equal(waiting.status,'queued');assert.equal(waiting.stage,'quiz');assert.deepEqual(waiting.completed_kinds,['note','deck'])
@@ -219,7 +219,7 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
   await user(0,'select public.review_card($1,0,3)',[first.deck])
   for(let click=1;click<=5;click++)for(const kind of ['note','deck','quiz']){
    const queued=await enqueue({asset_id:first[kind]})
-   await work();await work()
+   assert.equal(queued.stage,kind);await work()
    const task=(await db.query('select * from private.generation_queue where id=$1',[queued.id])).rows[0]
    assert.equal(task.status,'completed',kind+', click '+click+': '+task.last_error)
    const asset=(await db.query('select set_number from public.study_assets where id=$1',[task.result_asset_id])).rows[0]
@@ -232,10 +232,10 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
   assert.equal((await db.query('select status from public.document_files where id=$1',[m.doc])).rows[0].status,'ready')
   // Configuration failures remain clear and do not burn three provider calls.
   permanent=true
-  const paused=await enqueue({asset_id:first.deck});await work();await work()
+  const paused=await enqueue({asset_id:first.deck});await work()
   const rejected=(await db.query('select status,message,last_error from private.generation_queue where id=$1',[paused.id])).rows[0]
   assert.equal(rejected.status,'paused');assert.match(rejected.last_error,/400 INVALID_ARGUMENT/)
-  assert.match(rejected.message,/app owner/)
+  assert.match(rejected.message,/automatically/)
   assert.equal(draftCount,1)
   assert.equal((await db.query('select count(*)::int n from public.study_assets where material_id=$1',[m.id])).rows[0].n,18)
  }finally{for(const [key,value] of Object.entries(old)){if(value===undefined)delete globalThis[key];else globalThis[key]=value}}

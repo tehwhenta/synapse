@@ -18,6 +18,11 @@ async function geminiFailure(response: Response, apiKey: string, operation: stri
   if (apiKey) detail = detail.split(apiKey).join('[redacted]')
   detail = detail.replace(/AIza[\w-]{20,}/g, '[redacted]').replace(/Bearer\s+[\w.=-]+/gi, 'Bearer [redacted]')
     .replace(/https?:\/\/[^\s"'<>]+/gi, '[provider URL]').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 800)
+  const retryHeader=response.headers.get('retry-after')
+  const retryInfo=payload?.error?.details?.find((item:any)=>typeof item?.retryDelay==='string')?.retryDelay
+  const duration=typeof retryInfo==='string'?Number(retryInfo.replace(/s$/,'')):NaN
+  const headerDelay=retryHeader && /^\d+(?:\.\d+)?$/.test(retryHeader)?Number(retryHeader):retryHeader?(Date.parse(retryHeader)-Date.now())/1000:NaN
+  const retryAfterSeconds=[headerDelay,duration].filter(value=>Number.isFinite(value) && value>=0).reduce<number|undefined>((value,next)=>Math.max(value || 0,Math.ceil(next)),undefined)
   const label = response.status === 429 ? 'Gemini quota exceeded' : `Gemini ${operation} failed`
   const context = model ? `; model ${model}` : ''
   const fallback = response.status === 400 ? 'Google rejected a request parameter or project prerequisite. Check the function Logs for this request.'
@@ -27,7 +32,7 @@ async function geminiFailure(response: Response, apiKey: string, operation: stri
     : 'Google did not return an error description. Check the function Logs for this request.'
   const message = `${label} (${response.status}${status}${context}). ${detail || fallback}`
   console.error(message)
-  return new GeminiRequestError(response.status,message)
+  return new GeminiRequestError(response.status,message,retryAfterSeconds)
 }
 function inlineBase64(bytes: Uint8Array) {
   let binary = ''; for (let i=0;i<bytes.length;i+=8192) binary += String.fromCharCode(...bytes.subarray(i,i+8192))

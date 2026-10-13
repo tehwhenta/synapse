@@ -1,17 +1,9 @@
 import { unzipSync, strFromU8 } from 'fflate'
 
-export const MAX_FILE_SIZE = 20 * 1024 * 1024
-const types = {
-  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
-  txt: 'text/plain', md: 'text/plain',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', ppt: 'application/vnd.ms-powerpoint',
-}
-export function fileType(name) { return types[name.split('.').pop().toLowerCase()] }
-export function validateFile(file) {
-  if (!fileType(file.name)) throw new Error('Choose a PDF, DOCX, PPTX, PPT, JPG, PNG, WEBP, TXT, or MD file.')
-  if (!file.size || file.size > MAX_FILE_SIZE) throw new Error('Files must be between 1 byte and 20 MB.')
-}
+import { MAX_FILE_SIZE, fileType, validateUploadMetadata, validateUploadContents, validateStudyText, UploadReadError } from '../../supabase/functions/_shared/uploadTypes.ts'
+export {MAX_FILE_SIZE,fileType}
+export function validateFile(file){return validateUploadMetadata(file)}
+
 function xmlText(xml, tag) {
   const doc = new DOMParser().parseFromString(xml, 'application/xml')
   if (doc.querySelector('parsererror')) throw new Error('This Office file contains invalid XML. Save a new copy and try again.')
@@ -35,11 +27,16 @@ export function extractPptText(stream) {
   walk(0, data.length); return [...new Set(texts)].join('\n\n')
 }
 export async function extractOfficeText(file) {
+  await validateUploadContents(file,file.name)
   const ext = file.name.split('.').pop().toLowerCase()
-  if (['txt', 'md'].includes(ext)) return (await file.text()).slice(0, 100000)
+  if (['txt','md'].includes(ext)) {
+    try{return validateStudyText(new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer()))}
+    catch(error){if(error instanceof UploadReadError)throw error;throw new UploadReadError()}
+  }
   if (!['docx', 'pptx', 'ppt'].includes(ext)) return null
   const buffer = new Uint8Array(await file.arrayBuffer())
   let text = ''
+  try {
   if (ext === 'ppt') {
     const CFB = await import('cfb')
     const container = CFB.read(buffer, { type: 'array' })
@@ -56,7 +53,6 @@ export async function extractOfficeText(file) {
     const paths = Object.keys(archive).sort((a, b) => (Number(a.match(/slide(\d+)/)?.[1]) || 0) - (Number(b.match(/slide(\d+)/)?.[1]) || 0))
     text = paths.map(path => xmlText(strFromU8(archive[path]), ext === 'docx' ? 'w:p' : 'a:t')).join('\n\n')
   }
-  if (text.trim().length < 20) throw new Error('No readable text found. Export as PDF to include diagrams and scanned pages.')
-  if (text.length > 100000) throw new Error('This document exceeds 100,000 text characters. Split it into smaller chapters.')
-  return text
+  return validateStudyText(text)
+  }catch(error){if(error instanceof UploadReadError)throw error;throw new UploadReadError('This Office file cannot be read. Save a new DOCX/PPTX copy, or export it as a readable PDF.')}
 }

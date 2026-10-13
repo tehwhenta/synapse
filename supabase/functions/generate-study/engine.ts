@@ -1,3 +1,4 @@
+import { validateUploadMetadata, validateUploadContents, validateStudyText, UploadReadError } from '../_shared/uploadTypes.ts'
 import { automaticPrompt, automaticSchema, extractionPrompt, historyReference, validateAutomatic } from './automatic.ts'
 import { geminiFilePart, geminiJson, geminiText, deleteGeminiFiles } from './transport.ts'
 import { generationRequestBudgetMs, runDraftPipeline } from './reliable.ts'
@@ -9,8 +10,8 @@ function sourceText(value: string) {
     .replace(/<[^>]*>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
 }
 
-export async function executeGeneration(admin: any, userId: string, input: any, task?: any) {
- const deadline=Date.now()+generationRequestBudgetMs
+export async function executeGeneration(admin: any, userId: string, input: any, task?: any, requestDeadline?: number) {
+ const deadline=requestDeadline ?? Date.now()+generationRequestBudgetMs
  let jobId='',materialId='',analysisToken='',documentId=''
  const apiKey=Deno.env.get('GEMINI_API_KEY') || ''
  if (!apiKey) throw new Error('GEMINI_API_KEY is missing in Supabase Edge Function Secrets.')
@@ -30,12 +31,13 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
     }
     if (input.document_id) {
       const source=await rpc('generation_source',{ p_document_id:input.document_id,p_user_id:userId })
-      doc=source.document; material=source.material; materialId=material?.id || ''; documentId=doc.id
+      doc=source.document; validateUploadMetadata({name:doc.name,size:Number(doc.size_bytes)},doc.mime_type); material=source.material; materialId=material?.id || ''; documentId=doc.id
       const originalAvailable=!doc.purged_at && new Date(doc.expires_at)>new Date()
       if (originalAvailable && !material?.source_hash) {
         const downloaded=await admin.storage.from('study-files').download(doc.storage_path)
         if (downloaded.error || !downloaded.data) throw new Error('The original upload is missing. Upload the file again.')
         blob=downloaded.data
+        await validateUploadContents(blob!,doc.name,doc.mime_type)
         if (blob.size>20*1024*1024 || blob.size!==Number(doc.size_bytes)) throw new Error('Uploaded file size does not match the document or exceeds 20 MB.')
         const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer()))).map(b=>b.toString(16).padStart(2,'0')).join('')
         material=await rpc('bind_generation_source',{ p_document_id:doc.id,p_user_id:userId,p_hash:hash }); materialId=material.id
@@ -53,21 +55,22 @@ export async function executeGeneration(admin: any, userId: string, input: any, 
       if (!doc || doc.purged_at || new Date(doc.expires_at)<=new Date()) throw new Error('The original file expired before it was prepared. Upload it again.')
       if (!blob) {const downloaded=await admin.storage.from('study-files').download(doc.storage_path);if(downloaded.error || !downloaded.data) throw new Error('The original upload is missing. Upload it again.');blob=downloaded.data}
       if (blob.size>20*1024*1024 || blob.size!==Number(doc.size_bytes)) throw new Error('The file exceeds 20 MB or its size does not match.')
-      if (doc.mime_type==='text/plain') retained=await blob.text()
+      await validateUploadContents(blob!,doc.name,doc.mime_type)
+      if (doc.mime_type==='text/plain') {try{retained=validateStudyText(new TextDecoder('utf-8',{fatal:true}).decode(await blob!.arrayBuffer()))}catch(error){if(error instanceof UploadReadError)throw error;throw new UploadReadError()}}
       else if (doc.mime_type==='application/pdf' || doc.mime_type.startsWith('image/')) {
         const file=await geminiFilePart(blob,doc.mime_type,apiKey,temporaryFiles,deadline)
         retained=await runDraftPipeline({
           deadline,task:'source',
           generate:(revision,timeout)=>geminiText(apiKey,extractionPrompt+revision,[file],24000,1,timeout),
           validate:(text)=>{
-            if (typeof text==='string' && text.trim()==='SOURCE_UNREADABLE') throw new Error('The source is not legible. Upload a clearer chapter.')
+            if (typeof text==='string' && text.trim()==='SOURCE_UNREADABLE') throw new UploadReadError()
             if (typeof text!=='string' || text.trim().length<20 || text.length>100000) throw new StudyDraftError('format','Source extraction is incomplete or exceeds 100,000 characters. Preserve all substantive sections in compact Markdown.')
             return text
           },
           save:async text=>text,
         })
       }
-      if (typeof retained!=='string' || retained.trim().length<20 || retained.length>100000) throw new Error('Source text could not be read completely. Export a shorter chapter as PDF and upload it again.')
+      if (typeof retained!=='string' || retained.trim().length<20 || retained.length>100000) throw new UploadReadError()
       material=task ? await rpc('retain_queued_source',{p_task_id:task.id,p_lease:task.lease_token,p_text:retained}) : await rpc('retain_auto_source',{p_material_id:materialId,p_user_id:userId,p_text:retained,p_token:analysisToken})
       analysisToken=''
     }

@@ -17,7 +17,8 @@ async function importTs(path) {
 test('Reviewer instructions cover terminology, source sections, complete lists, and reproducible worked solutions',async()=>{
   const { studyPrompt, outputSchema } = await importTs('../supabase/functions/generate-study/prompts.ts')
   const prompt = studyPrompt()
-  for (const part of ['every substantive source section','Key terminology','explanation of EACH item','Comparisons and connections','line-by-line worked solution','verification','self-check questions WITH short answers','Source limitations']) assert.ok(prompt.includes(part), part)
+  assert.match(prompt,/Only when the source teaches a mathematical/);assert.match(prompt,/For non-mathematical topics/);assert.match(prompt,/Do not repeat the body/)
+  for (const part of ['every substantive source section','Key terminology','explanation of EACH item','Comparisons and connections','line-by-line worked solution','verification','Internal self-checklist (do not print)','Source limitations']) assert.ok(prompt.includes(part), part)
   const retained = studyPrompt('all', [], false)
   assert.match(retained, /source text is already retained/)
   assert.equal(outputSchema('all',false).required.includes('source_text'),false)

@@ -10,7 +10,7 @@ test('Automatic generation engine prepares once, saves all formats separately, r
  let handler,retained='',hash=null,claimed=0,failed=0,broken=false,active=true,currentKind
  const saved=[],history={note:[],deck:[],quiz:[]},env={SUPABASE_URL:'https://test.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'server-only',GEMINI_API_KEY:'fake-key',ALLOWED_ORIGINS:'http://localhost:5173'}
  const material=()=>({id:materialId,source_hash:hash,source_text:retained,source_format:'markdown'})
- const doc={id:documentId,material_id:materialId,storage_path:'folder/user/file.txt',mime_type:'text/plain',size_bytes:new Blob([text]).size,expires_at:new Date(Date.now()+86400000).toISOString()}
+ const doc={name:'queues.txt',id:documentId,material_id:materialId,storage_path:'folder/user/file.txt',mime_type:'text/plain',size_bytes:new Blob([text]).size,expires_at:new Date(Date.now()+86400000).toISOString()}
  const client={auth:{getUser:async(token)=>({data:{user:token==='valid'?{id:uid}:null},error:token==='valid'?null:{message:'invalid'}})},from:table=>{
   const query={select(){return this},eq(){return this},update(){return this},single:async()=>({data:{id:documentId,material_id:materialId,kind:'deck',is_custom:false},error:null}),then:resolve=>resolve({data:null,error:null})};return query
  },storage:{from:()=>({download:async()=>({data:new Blob([text]),error:null})})},rpc:async(name,args)=>{

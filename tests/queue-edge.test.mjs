@@ -37,7 +37,7 @@ test('Public generation verifies identity, accepts only queue admission, and rej
 test('Provider throttling is deferred, malformed drafts have a budget, and configuration errors pause immediately',async()=>{
  const bundle=await build({stdin:{contents:"export {queueRecovery} from './queue.ts';export * from './errors.ts'",resolveDir:fileURLToPath(new URL('../supabase/functions/generate-study/',import.meta.url))},bundle:true,write:false,format:'esm',platform:'neutral'})
  const {queueRecovery,GeminiRequestError,StudyDraftError}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'))
- const limited=queueRecovery(new GeminiRequestError(429,'quota'),1);assert.ok(limited.seconds>=60);assert.equal(limited.providerBusy,true)
+ const limited=queueRecovery(new GeminiRequestError(429,'quota'),1);assert.ok(limited.seconds>=30);assert.equal(limited.providerBusy,true)
  assert.ok(queueRecovery(new GeminiRequestError(503,'temporary'),2).seconds>0)
  assert.equal(queueRecovery(new GeminiRequestError(400,'configuration'),1).seconds,null)
  assert.equal(queueRecovery(new StudyDraftError('format','invalid'),3).seconds,null)

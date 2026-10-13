@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 // Single-file versions for the Supabase Dashboard editor. No extra imports/files to paste.
 mkdirSync('supabase/dashboard', { recursive: true })
+const uploadTypes = readFileSync('supabase/functions/_shared/uploadTypes.ts','utf8')
 const validation = readFileSync('supabase/functions/generate-study/validation.ts', 'utf8')
 const prompts = readFileSync('supabase/functions/generate-study/prompts.ts', 'utf8')
 const guided = readFileSync('supabase/functions/generate-study/guided.ts', 'utf8').replace(/^import .* from '\.\/prompts\.ts'\n/gm, '')
@@ -9,10 +10,10 @@ const reliable = readFileSync('supabase/functions/generate-study/reliable.ts','u
 const transport = readFileSync('supabase/functions/generate-study/transport.ts', 'utf8').replace(/^import .* from '\.\/errors\.ts'\n/gm,'')
 const coverage = readFileSync('supabase/functions/generate-study/coverage.ts','utf8').replace(/^import .* from '\.\/guided\.ts'\n/gm,'')
 const automatic = readFileSync('supabase/functions/generate-study/automatic.ts','utf8').replace(/^import .* from '\.\/(guided|prompts|errors)\.ts'\n/gm,'')
-const engine = readFileSync('supabase/functions/generate-study/engine.ts','utf8').replace(/^import .* from '\.\/(automatic|transport|reliable|errors)\.ts'\n/gm,'')
-const queue = readFileSync('supabase/functions/generate-study/queue.ts','utf8').replace(/^import .* from '\.\/(engine|errors)\.ts'\n/gm,'')
+const engine = readFileSync('supabase/functions/generate-study/engine.ts','utf8').replace(/^import .* from '\.\/(automatic|transport|reliable|errors)\.ts'\n/gm,'').replace(/^import .* from '\.\.\/_shared\/uploadTypes\.ts'\n/gm,'')
+const queue = readFileSync('supabase/functions/generate-study/queue.ts','utf8').replace(/^import .* from '\.\/(engine|errors|reliable)\.ts'\n/gm,'').replace(/^import .* from '\.\.\/_shared\/uploadTypes\.ts'\n/gm,'')
 const handler = readFileSync('supabase/functions/generate-study/index.ts', 'utf8').replace(/^import .* from '\.\/(guided|transport|coverage|automatic|reliable|errors|engine|queue)\.ts'\n/gm, '')
-writeFileSync('supabase/dashboard/generate-study.ts', '// Generated from functions/generate-study. Paste this ENTIRE file into Dashboard index.ts.\n' + validation + '\n' + prompts + '\n' + guided + '\n' + errors + '\n' + transport + '\n' + coverage + '\n' + automatic + '\n' + reliable + '\n' + engine + '\n' + queue + '\n' + handler)
+writeFileSync('supabase/dashboard/generate-study.ts', '// Generated from functions/generate-study. Paste this ENTIRE file into Dashboard index.ts.\n' + validation + '\n' + prompts + '\n' + guided + '\n' + errors + '\n' + transport + '\n' + coverage + '\n' + automatic + '\n' + reliable + '\n' + uploadTypes + '\n' + engine + '\n' + queue + '\n' + handler)
 const accountCleanup = readFileSync('supabase/functions/cleanup-files/accountDeletion.ts', 'utf8')
 const maintenance = readFileSync('supabase/functions/cleanup-files/maintenance.ts', 'utf8').replace(/^import .* from '\.\/accountDeletion\.ts'\n/gm, '')
 const cleanup = readFileSync('supabase/functions/cleanup-files/index.ts', 'utf8').replace(/^import .* from '\.\/maintenance\.ts'\n/gm, '')

@@ -7,7 +7,7 @@ export class StudyDraftError extends Error {
   }
 }
 export class GeminiRequestError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public retryAfterSeconds?: number) {
     super(message)
     this.name = 'GeminiRequestError'
   }

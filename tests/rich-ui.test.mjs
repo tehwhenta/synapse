@@ -17,7 +17,7 @@ before(async () => {
   dom.window.Range.prototype.getBoundingClientRect = () => ({left:0,right:0,top:0,bottom:0,width:0,height:0})
   rich = { ...await import('../src/lib/richText.js'), ...await import('../src/lib/studyRendering.js') }
   const utils = await import('@vue/test-utils'); mount = utils.mount; flushPromises = utils.flushPromises
-  const compiled = await build({ stdin:{ contents:"export {default as App} from './src/App.vue'; export {default as SpaceList} from './src/components/SpaceList.vue'; export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {default as ManualDeckDialog} from './src/components/ManualDeckDialog.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
+  const compiled = await build({ stdin:{ contents:"export {default as App} from './src/App.vue'; export {default as SpaceList} from './src/components/SpaceList.vue'; export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {default as GenerationProgress} from './src/components/GenerationProgress.vue'; export {default as ManualDeckDialog} from './src/components/ManualDeckDialog.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
     {name:'vue-test',setup(builder){builder.onLoad({filter:/\.vue$/},args=>{const {descriptor}=parse(readFileSync(args.path,'utf8'));return {contents:compileScript(descriptor,{id:args.path,inlineTemplate:true}).content,loader:'js',resolveDir:dirname(args.path)}})}}
   ] })
   // Download-style asset glob is a build-time feature, irrelevant to these DOM interaction tests.
@@ -305,4 +305,27 @@ test('Invitation dialog provides a paste box without email input, including for 
   await wrapper.find('.join-space-form').trigger('submit');await flushPromises()
   assert.equal(supplied,'https://rcgsynapse.vercel.app/?invite='+ 'a'.repeat(64))
  }finally{wrapper.unmount();await flushPromises()}
+})
+
+test('Generation bars track saved sets and unsupported uploads show a clear error before queue admission',async()=>{
+ runtime.setActivePinia(runtime.createPinia())
+ const wrapper=mount(runtime.App,{global:{stubs:{Teleport:true,StudyRoom:true,StudyViewer:true,RichEditor:true,AdminPanel:true,FocusTimer:true,Avatar:true}},attachTo:document.body})
+ try{
+  await flushPromises();await flushPromises()
+  const workspace=runtime.useWorkspaceStore();let uploads=0;workspace.uploadDocument=async()=>{uploads++}
+  const task={id:'pending',title:'Chapter',document_id:'document',folder_id:workspace.selectedFolderId,status:'processing',stage:'note',completed_kinds:[]}
+  for(const [saved,expected] of [[[],0],[['note'],33],[['note','deck'],66]]){
+   workspace.generationTasks=[{...task,completed_kinds:saved}];await flushPromises()
+   assert.equal(Number(wrapper.find('.generation-status progress').attributes('value')),expected)
+  }
+  const input=wrapper.find('input[type="file"][accept^=".pdf"]')
+  Object.defineProperty(input.element,'files',{value:[{name:'network.pkt',size:200}],configurable:true})
+  await input.trigger('change');await flushPromises()
+  assert.equal(uploads,0);assert.match(wrapper.find('.modal .error-box').text(),/cannot be read.*PDF.*Packet Tracer/)
+  assert.equal(wrapper.find('.toast-error').exists(),true);assert.equal(wrapper.find('.toast-error').attributes('role'),'alert')
+ }finally{wrapper.unmount();await flushPromises()}
+ const bar=mount(runtime.GenerationProgress,{props:{task:{status:'completed',document_id:'doc',completed_kinds:['note','deck','quiz']}}})
+ assert.equal(bar.find('progress').attributes('value'),'100');bar.unmount()
+ const single=mount(runtime.GenerationProgress,{props:{task:{status:'processing',kind:'deck',completed_kinds:[]}}})
+ assert.equal(single.find('progress').attributes('value'),undefined,'An active AI request does not invent a completion percentage');single.unmount()
 })

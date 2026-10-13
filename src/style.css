@@ -565,3 +565,27 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .cleanup-option small { display:block; margin-top:3px; }
 .queue-paused-row { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px; padding:12px 0; border-top:1px solid var(--border,#dddcd4); }
 .queue-paused-row>div { flex:1; min-width:180px; overflow-wrap:anywhere; }
+
+/* Progress reflects saved formats; individual AI requests remain indeterminate. */
+.generation-progress { width:100%; min-width:0; margin:12px 0 8px; }
+.generation-status>div { flex:1; }
+.generation-progress-label { display:flex; justify-content:space-between; gap:12px; margin-bottom:7px; color:#475039; font-size:.75rem; font-weight:500; }
+.generation-progress progress { display:block; width:100%; height:8px; border:0; border-radius:999px; overflow:hidden; appearance:none; background:#e7e4d6; accent-color:#66734f; }
+.generation-progress progress::-webkit-progress-bar { background:#e7e4d6; border-radius:999px; }
+.generation-progress progress::-webkit-progress-value { background:#66734f; border-radius:999px; transition:width .35s ease; }
+.generation-progress progress::-moz-progress-bar { background:#66734f; border-radius:999px; }
+.generation-progress progress:indeterminate { background:linear-gradient(90deg,#e7e4d6 25%,#66734f 48%,#e7e4d6 70%); background-size:220% 100%; animation:generation-wait 1.8s linear infinite; }
+.generation-progress progress:indeterminate::-webkit-progress-bar { background:transparent; }
+.generation-progress-waiting progress { accent-color:#9a8057; }
+.viewer-body>.generation-progress { padding:0 18px; }
+.toast-message { background:#46553b; color:#fffdf5; border-color:#84966d; box-shadow:0 10px 36px #2c352830; }
+.toast-message.toast-error { background:#713f36; border-color:#b88674; }
+.toast-message>svg,.toast-message>button { flex-shrink:0; }
+.toast-message>span { min-width:0; overflow-wrap:anywhere; }
+.toast-message .icon-button { color:#fffdf5; }
+.toast-message .icon-button:hover { background:#ffffff18; color:#fff; }
+.modal .button.primary { background:#46553b; color:#fffdf5; border-color:#46553b; }
+.modal .button.primary:hover:not(:disabled) { background:#35422c; border-color:#35422c; }
+.modal .button.primary:focus-visible,.toast-message button:focus-visible { outline:2px solid #b9c89a; outline-offset:3px; }
+@keyframes generation-wait { from {background-position:100% 0} to {background-position:-100% 0} }
+@media(prefers-reduced-motion:reduce){.generation-progress progress {animation:none!important;transition:none!important}}

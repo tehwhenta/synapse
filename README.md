@@ -1,12 +1,12 @@
-# Current update: Synapse 1.8.0
+# Current update: Synapse 1.8.1
 
-Follow [QUEUE_SETUP.md](QUEUE_SETUP.md) for durable automatic generation and safe admin cleanup. Apply the missing migrations through 011 first; then run 012 and 014, deploy all three updated Dashboard functions, and enable the queue with 013. Deploy the matching frontend too. Earlier upgrade guides describe their original releases.
+Follow [GENERATION_REFINEMENT_SETUP.md](GENERATION_REFINEMENT_SETUP.md) for faster generation, automatic pause recovery, readable-file validation, focused reviewer prompts and visible progress. If 1.8 already works, run only 015, redeploy generate-study, then run 016 and deploy the matching frontend. Keep earlier successful migrations intact.
 
 # Synapse
 
 A Vue 3 study workspace, designed around your cream, sand, taupe, olive, and warm brown palette.
 
-**Already installed Synapse? Start with [QUEUE_SETUP.md](QUEUE_SETUP.md).** Older release guides are historical. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
+**Already installed Synapse? Start with [GENERATION_REFINEMENT_SETUP.md](GENERATION_REFINEMENT_SETUP.md).** Older release guides are historical. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
 
 ## Start here
 

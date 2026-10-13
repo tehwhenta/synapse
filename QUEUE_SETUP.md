@@ -1,3 +1,5 @@
+> Initial 1.8 installation guide. For the current update, follow [GENERATION_REFINEMENT_SETUP.md](GENERATION_REFINEMENT_SETUP.md). Do not run 013 after 016; it would restore the older minute schedule.
+
 # Synapse 1.8 — generation queue and database care
 
 An upload is now one saved request. Supabase processes source preparation, reviewer, flashcards, and quiz in separate bounded stages. A temporary failure automatically continues from the unfinished stage. You can change sections or close the tab after the app confirms the request was accepted. Completed sets appear as they finish.
