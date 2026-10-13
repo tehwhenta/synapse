@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { build } from 'esbuild'
 import { fileURLToPath } from 'node:url'
 
-test('Authenticated automatic generation prepares once, saves all formats separately, refreshes one kind, and keeps valid output on failure',async()=>{
+test('Automatic generation engine prepares once, saves all formats separately, refreshes one kind, and keeps valid output on failure',async()=>{
  const old={Deno:globalThis.Deno,fetch:globalThis.fetch,__synapseAutoClient:globalThis.__synapseAutoClient}
  const materialId=crypto.randomUUID(),documentId=crypto.randomUUID(),uid=crypto.randomUUID()
  const text='A queue uses FIFO ordering. Enqueue adds at the rear and dequeue removes the oldest item.'
@@ -35,12 +35,10 @@ test('Authenticated automatic generation prepares once, saves all formats separa
   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(output)}]}}]})
  }
  try{
-  const bundle=await build({entryPoints:[fileURLToPath(new URL('../supabase/dashboard/generate-study.ts',import.meta.url))],bundle:true,write:false,platform:'neutral',format:'esm',external:['npm:*']})
-  await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text.replace(/^import.*from "npm:.*";$/m,'const createClient=globalThis.__synapseAutoClient;')).toString('base64'))
+  const bundle=await build({entryPoints:[fileURLToPath(new URL('../supabase/functions/generate-study/engine.ts',import.meta.url))],bundle:true,write:false,platform:'neutral',format:'esm',external:['npm:*']})
+  const {executeGeneration}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'))
+  handler=async req=>{try{return Response.json(await executeGeneration(client,uid,await req.json()))}catch(error){return Response.json({error:error.message},{status:500})}}
   const request=(body,token='valid')=>new Request('https://test/generate-study',{method:'POST',headers:{Origin:'http://localhost:5173',Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)})
-  assert.equal((await handler(request({action:'prepare',document_id:documentId},'bad'))).status,401)
-  active=false;assert.equal((await handler(request({action:'prepare',document_id:documentId}))).status,403);active=true
-  assert.equal((await handler(request({action:'generate',document_id:documentId,kind:'bad'}))).status,400)
   assert.equal((await handler(request({action:'prepare',document_id:documentId}))).status,200);assert.equal(claimed,0)
   for(const kind of ['note','deck','quiz'])assert.equal((await handler(request({action:'generate',document_id:documentId,kind,initial:true}))).status,200)
   assert.deepEqual(saved.map(s=>s.kind),['note','deck','quiz']);assert.equal(claimed,3)

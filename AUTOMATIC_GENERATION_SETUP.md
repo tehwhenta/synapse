@@ -1,3 +1,5 @@
+> Historical release guide. For the current files, follow [QUEUE_SETUP.md](QUEUE_SETUP.md). Version 1.8 requires the queue migrations, updated functions, and frontend.
+
 # Synapse 1.7.1 — automatic study generation
 
 **If you already installed 1.7 and migration 010:** use [GENERATION_RELIABILITY_SETUP.md](GENERATION_RELIABILITY_SETUP.md) for the error fix. It adds migration 011 and the latest function code. The steps below install the complete automatic workflow from an earlier version.

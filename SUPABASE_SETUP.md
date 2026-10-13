@@ -1,10 +1,10 @@
-# Current update: Synapse 1.7.1
+# Current update: Synapse 1.8.0
 
-Use [GENERATION_RELIABILITY_SETUP.md](GENERATION_RELIABILITY_SETUP.md) to fix alternating generation failures. Run migration 011 after 010 and deploy the latest combined generate-study Dashboard file. For the original automatic upload workflow and removal of Seeds/topic choices, use [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md).
+Follow [QUEUE_SETUP.md](QUEUE_SETUP.md) for durable automatic generation and safe admin cleanup. Apply the missing migrations through 011 first; then run 012 and 014, deploy all three updated Dashboard functions, and enable the queue with 013. Deploy the matching frontend too. Earlier upgrade guides describe their original releases.
 
 # Synapse: exact Supabase setup
 
-**Already set up Synapse? Follow [GENERATION_RELIABILITY_SETUP.md](GENERATION_RELIABILITY_SETUP.md).** For `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful migrations.
+**Already set up Synapse? Follow [QUEUE_SETUP.md](QUEUE_SETUP.md).** For `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful migrations.
 
 Complete these steps once for your new project. Use the Dashboard route below; the CLI alternative at the end does the same deployments. Do not use both deployment routes unless updating a function.
 
@@ -27,7 +27,7 @@ Complete these steps once for your new project. Use the Dashboard route below; t
 5. Confirm the query succeeds before proceeding.
 6. Open another new query, paste the entire contents of `supabase/migrations/003_study_refinements.sql`, and click **Run** once. This adds the current saved-set, photo, and space-deletion features.
 7. In another new query, run `supabase/migrations/004_reviewer_accounts.sql` once. It adds reviewer drawings and the 48-hour account deletion lifecycle. Then run `006_system_maintenance.sql` once. After the cleanup job's original Vault setup below, use `005_cleanup_interval.sql` to update it to every ten minutes. Follow `ADMIN_AND_READINESS.md` to create the admin function and bind the confirmed admin account.
-8. Run `007_admin_email_type.sql`, `008_guided_generation.sql`, `009_seeds_and_custom_cards.sql`, `010_automatic_study.sql`, and `011_generation_reliability.sql` in that order, each as a separate complete query, before deploying the generation function. The latest workflow automatically generates all three study formats without Seeds/topic choices and revises invalid drafts within the same click. Study files retain the 20 MB cap.
+8. Run `007_admin_email_type.sql`, `008_guided_generation.sql`, `009_seeds_and_custom_cards.sql`, `010_automatic_study.sql`, and `011_generation_reliability.sql` in that order, each as a separate complete query, before deploying the generation function. The latest workflow automatically generates all three study formats without Seeds/topic choices and revises invalid drafts within the same click. Study files retain the 20 MB cap. Then run `012_generation_queue.sql` and `014_safe_database_cleanup.sql`. After the functions and Vault secrets below are configured, run `013_generation_schedule.sql`; the new queue needs this schedule. Follow `QUEUE_SETUP.md` for exact deployment order.
 
 Run it once in a new project. It uses a transaction: a failed run rolls back the whole script. If it succeeded, do not run it again. It does not wipe existing tables to make re-runs appear successful.
 

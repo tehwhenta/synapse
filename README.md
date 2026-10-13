@@ -1,12 +1,12 @@
-# Current update: Synapse 1.7.1
+# Current update: Synapse 1.8.0
 
-Use [GENERATION_RELIABILITY_SETUP.md](GENERATION_RELIABILITY_SETUP.md) to fix alternating generation failures. Run migration 011 after 010 and deploy the latest combined generate-study Dashboard file. For the original automatic upload workflow and removal of Seeds/topic choices, use [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md).
+Follow [QUEUE_SETUP.md](QUEUE_SETUP.md) for durable automatic generation and safe admin cleanup. Apply the missing migrations through 011 first; then run 012 and 014, deploy all three updated Dashboard functions, and enable the queue with 013. Deploy the matching frontend too. Earlier upgrade guides describe their original releases.
 
 # Synapse
 
 A Vue 3 study workspace, designed around your cream, sand, taupe, olive, and warm brown palette.
 
-**Already installed Synapse? Start with [GENERATION_RELIABILITY_SETUP.md](GENERATION_RELIABILITY_SETUP.md).** Older release guides are historical. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
+**Already installed Synapse? Start with [QUEUE_SETUP.md](QUEUE_SETUP.md).** Older release guides are historical. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
 
 ## Start here
 
@@ -27,7 +27,7 @@ On Windows, `start.bat` installs dependencies if needed and starts the same deve
 - Private PDF, DOCX, PPTX, legacy PPT, image, TXT, and Markdown uploads; 20 MB per file.
 - Comprehensive Gemini reviewers, explained terminology, tables and enumerations, worked mathematical solutions, flashcard decks, and mixed practice quizzes.
 - Fresh generated sets kept alongside earlier sets, with numbered navigation and editable titles.
-- Automatic generation of all three formats on upload; one-click fresh sets with AI-selected counts and no topic/count picker or Seed currency. Invalid drafts are revised within the same action.
+- Automatic generation of all three formats on upload; one-click fresh sets with AI-selected counts and no topic/count picker or Seed currency. Invalid drafts are revised automatically. A saved queue completes missing formats after temporary failures, works across page reloads, and caps concurrent AI work across users.
 - Custom flashcard decks with individual question/answer editing and deletion, no AI usage; continuous highlighting, sticky reviewer tools, and drawings above text/tables.
 - Formatted note editing with a Word-style toolbar, tables, and equations; printable PDF, offline HTML study sheets, plain text, and optional Anki TSV exports.
 - Resizable/maximizable reviewer windows, colored highlights, written text annotations, and freehand drawing with pen thickness/color and stroke erasing. Annotations are saved per set and included in formatted exports.
@@ -41,6 +41,7 @@ On Windows, `start.bat` installs dependencies if needed and starts the same deve
 - Original-file expiry warnings and scheduled cleanup; generated materials stay in Postgres unless their space/account is deliberately deleted.
 - Animated flashcards with labeled question/answer sides and reduced-motion support.
 - A browser-local sample mode. Demo progress is separate from real accounts.
+- Preview/select cleanup of expired technical records, inspect paused generation tasks, and resume them after fixing service configuration. Saved study content is retained.
 - Server-protected System care for the confirmed admin account: usage estimates, immediate bounded cleanup, and reviewed inactive-account removal with seven-day recovery and protection of actively shared study spaces.
 - Online/Away aggregation across devices, reconnect/page restoration handling, low-frequency activity writes, and profile-photo link reuse.
 - Accessible password visibility controls, gentle navigation transitions with reduced-motion support, and mobile layouts that wrap long names, tables, toolbars, and controls.

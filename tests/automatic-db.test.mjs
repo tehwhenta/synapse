@@ -31,7 +31,7 @@ before(async()=>{
     grant usage on schema auth,storage,realtime to anon,authenticated,service_role;
     grant select,insert,delete on storage.objects to authenticated; grant select,insert on realtime.messages to authenticated;
     create publication supabase_realtime;`)
-  for(const file of ['001_synapse.sql','003_study_refinements.sql','004_reviewer_accounts.sql','006_system_maintenance.sql','007_admin_email_type.sql','008_guided_generation.sql','009_seeds_and_custom_cards.sql','010_automatic_study.sql','011_generation_reliability.sql']) await db.exec(readFileSync(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'))
+  for(const file of ['001_synapse.sql','003_study_refinements.sql','004_reviewer_accounts.sql','006_system_maintenance.sql','007_admin_email_type.sql','008_guided_generation.sql','009_seeds_and_custom_cards.sql','010_automatic_study.sql','011_generation_reliability.sql','012_generation_queue.sql','014_safe_database_cleanup.sql']) await db.exec(readFileSync(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'))
   for(const [i,id] of ids.entries()) await db.query('insert into auth.users(id,email,email_confirmed_at,last_sign_in_at) values($1,$2,now(),now())',[id,`guided${i}@example.com`])
 })
 beforeEach(async()=>{await db.exec('delete from private.ai_usage;delete from private.seed_usage')})
@@ -127,8 +127,8 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
  const pdf=new Blob(['%PDF-1.7 mock provider input'],{type:'application/pdf'})
  await db.query("update public.study_materials set source_text='',source_hash=null where id=$1",[m.id])
  await db.query("update public.document_files set mime_type='application/pdf',size_bytes=$2,status='processing' where id=$1",[m.doc,pdf.size])
- let handler,current=null,scanDrafts=0,claimCount=0,draftCount=0,downloads=0,permanent=false
- const outputs={note:[],deck:[],quiz:[]},callCounts=[],env={SUPABASE_URL:'https://mock.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'mock-server-only',GEMINI_API_KEY:'mock-only',ALLOWED_ORIGINS:'http://localhost:5173'}
+ let handler,current=null,scanDrafts=0,claimCount=0,draftCount=0,downloads=0,permanent=false,quizThrottled=false
+ const outputs={note:[],deck:[],quiz:[]},callCounts=[],env={SUPABASE_URL:'https://mock.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'mock-server-only',GEMINI_API_KEY:'mock-only',ALLOWED_ORIGINS:'http://localhost:5173',CRON_SECRET:'test-worker-secret-long'}
  const rows=[
   [ ['What is FIFO ordering?','The earliest remaining arrival is removed first.','queue:fifo_definition'],['What does a stack pop remove?','The top item.','stack:pop_definition'],['What is a sorted prefix?','The leading part of the array already in sorted order.','sort:prefix_definition'] ],
   [ ['Enqueue A then B, remove once and enqueue C. Which item is now at the front?','B remains the front after A is removed.','queue:trace_interleaved_operations'],['Push X then Y and pop once. Which item becomes the top?','X becomes the top after Y is removed.','stack:trace_remaining_top'],['Insert 2 into the sorted prefix [1,4]. What is the result?','[1,2,4].','sort:insert_into_prefix'] ],
@@ -149,12 +149,12 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
   let id,values
   const query={select(){return this},eq(key,value){if(key==='id')id=value;return this},update(value){values=value;return this},async single(){return {data:(await backend('select * from public.'+table+' where id=$1',[id])).rows[0],error:null}},then(resolve,reject){return backend('update public.document_files set status=$2,error_message=$3 where id=$1',[id,values.status,values.error_message]).then(value=>resolve({data:value.rows,error:null}),reject)}}
   return query
- },rpc:async(name,args)=>{
+ },rpc:async(name,args={})=>{
   try{
    const entries=Object.entries(args)
    const result=await backend('select to_jsonb(public.'+name+'('+entries.map(([key],i)=>key+'=>$'+(i+1)).join(',')+')) value',entries.map(([,value])=>value&&typeof value==='object'?JSON.stringify(value):value))
    const value=result.rows[0].value
-   if(name==='claim_auto_generation'&&!value.existing_asset_id){claimCount++;draftCount=0;current={kind:args.p_kind,claim:value}}
+   if(name==='claim_queued_generation'&&!value.existing_asset_id){claimCount++;draftCount=0;current={kind:value.kind,claim:value}}
    return {data:value,error:null}
   }catch(error){return {data:null,error:{message:error.message}}}
  }}
@@ -169,6 +169,7 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
    assert.match(prompt,/DRAFT REVISION/)
    return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:source}]}}]})
   }
+  if(current.kind==='quiz' && current.claim.options.set_number===1 && !quizThrottled){quizThrottled=true;return Response.json({error:{status:'RESOURCE_EXHAUSTED',message:'Temporary per-minute limit'}},{status:429})}
   draftCount++
   const {kind,claim}=current,n=claim.options.set_number
   assert.ok(prompt.includes(claim.options.variant));assert.ok(prompt.includes('saved set '+n))
@@ -188,28 +189,53 @@ test('Full deployed handler: first upload plus five consecutive Generate actions
   const bundle=await build({entryPoints:[fileURLToPath(new URL('../supabase/dashboard/generate-study.ts',import.meta.url))],bundle:true,write:false,platform:'neutral',format:'esm',external:['npm:*']})
   await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text.replace(/^import.*from "npm:.*";$/m,'const createClient=globalThis.__synapseReliableClient;')).toString('base64'))
   const request=body=>new Request('https://mock/generate-study',{method:'POST',headers:{Origin:'http://localhost:5173',Authorization:'Bearer valid','Content-Type':'application/json'},body:JSON.stringify(body)})
-  const prepared=await handler(request({action:'prepare',document_id:m.doc}));assert.equal(prepared.status,200,JSON.stringify(await prepared.json()))
-  assert.equal(scanDrafts,2);assert.equal(downloads,1)
+  await db.exec('update private.generation_capacity set scheduler_ready=true')
+  const work=async()=>{
+   const task=await rpc('claim_generation_task',[]);assert.ok(task)
+   const response=await handler(new Request('https://mock/generate-study',{method:'POST',headers:{'x-cron-secret':env.CRON_SECRET,'Content-Type':'application/json'},body:JSON.stringify({task_id:task.id,lease_token:task.lease_token})}))
+   assert.equal(response.status,200,JSON.stringify(await response.json()))
+   return task
+  }
+  const enqueue=async target=>{
+   const response=await handler(request({action:'enqueue',request_id:crypto.randomUUID(),...target}))
+   assert.equal(response.status,202);return (await response.json()).task
+  }
+  const initial=await enqueue({document_id:m.doc})
+  await work();assert.equal(scanDrafts,2);assert.equal(downloads,1)
   const first={}
   for(const kind of ['note','deck','quiz']){
-   const response=await handler(request({action:'generate',document_id:m.doc,kind,initial:true})),body=await response.json()
-   assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.set_number,1)
-   first[kind]=body.asset_id;callCounts.push(draftCount)
+   await work()
+   if(kind==='quiz'){
+    const waiting=(await db.query('select status,stage,completed_kinds from private.generation_queue where id=$1',[initial.id])).rows[0]
+    assert.equal(waiting.status,'queued');assert.equal(waiting.stage,'quiz');assert.deepEqual(waiting.completed_kinds,['note','deck'])
+    assert.equal((await db.query('select count(*)::int n from public.study_assets where material_id=$1',[m.id])).rows[0].n,2)
+    await db.exec('update private.generation_capacity set cooldown_until=null');await db.query('update private.generation_queue set available_at=now() where id=$1',[initial.id])
+    await work()
+   }
+   const asset=(await db.query('select * from public.study_assets where material_id=$1 and kind=$2',[m.id,kind])).rows[0]
+   assert.equal(asset.set_number,1);first[kind]=asset.id;callCounts.push(draftCount)
   }
+  assert.equal((await db.query('select status from private.generation_queue where id=$1',[initial.id])).rows[0].status,'completed')
   await user(0,'select public.review_card($1,0,3)',[first.deck])
   for(let click=1;click<=5;click++)for(const kind of ['note','deck','quiz']){
-   const response=await handler(request({action:'generate',asset_id:first[kind]})),body=await response.json()
-   assert.equal(response.status,200,`${kind}, click ${click}: `+JSON.stringify(body));assert.equal(body.set_number,click+1)
-   callCounts.push(draftCount)
+   const queued=await enqueue({asset_id:first[kind]})
+   await work();await work()
+   const task=(await db.query('select * from private.generation_queue where id=$1',[queued.id])).rows[0]
+   assert.equal(task.status,'completed',kind+', click '+click+': '+task.last_error)
+   const asset=(await db.query('select set_number from public.study_assets where id=$1',[task.result_asset_id])).rows[0]
+   assert.equal(asset.set_number,click+1);callCounts.push(draftCount)
   }
-  assert.equal(claimCount,18);assert.deepEqual(callCounts,Array(18).fill(2));assert.equal(downloads,1)
+  assert.equal(claimCount,19);assert.deepEqual(callCounts,Array(18).fill(2));assert.equal(downloads,1)
   assert.equal((await db.query('select count(*)::int n from public.study_assets where material_id=$1',[m.id])).rows[0].n,18)
   assert.equal((await db.query("select count(*)::int n from private.material_jobs where material_id=$1 and status='completed'",[m.id])).rows[0].n,18)
   assert.equal((await db.query('select count(*)::int n from public.flashcard_progress where asset_id=$1',[first.deck])).rows[0].n,1)
   assert.equal((await db.query('select status from public.document_files where id=$1',[m.doc])).rows[0].status,'ready')
   // Configuration failures remain clear and do not burn three provider calls.
   permanent=true
-  const rejected=await handler(request({action:'generate',asset_id:first.deck}));assert.equal(rejected.status,500);assert.match((await rejected.json()).error,/400 INVALID_ARGUMENT/)
+  const paused=await enqueue({asset_id:first.deck});await work();await work()
+  const rejected=(await db.query('select status,message,last_error from private.generation_queue where id=$1',[paused.id])).rows[0]
+  assert.equal(rejected.status,'paused');assert.match(rejected.last_error,/400 INVALID_ARGUMENT/)
+  assert.match(rejected.message,/app owner/)
   assert.equal(draftCount,1)
   assert.equal((await db.query('select count(*)::int n from public.study_assets where material_id=$1',[m.id])).rows[0].n,18)
  }finally{for(const [key,value] of Object.entries(old)){if(value===undefined)delete globalThis[key];else globalThis[key]=value}}

@@ -1,3 +1,5 @@
+> Historical release guide. For the current files, follow [QUEUE_SETUP.md](QUEUE_SETUP.md). Version 1.8 requires the queue migrations, updated functions, and frontend.
+
 # Synapse 1.7.1 — generation reliability fix
 
 This patch fixes false reviewer duplication checks and revises defective Gemini drafts inside the same Generate request. Uploads still automatically produce a reviewer, flashcards and a practice quiz. Generate creates one new numbered set of the type you are viewing. Earlier sets, custom cards, annotations and progress stay saved.

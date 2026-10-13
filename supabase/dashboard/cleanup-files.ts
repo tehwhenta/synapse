@@ -58,7 +58,7 @@ export async function runMaintenance(admin: any, actorId: string | null = null) 
       const { error: updateError } = await admin.from('document_files').update({ purged_at: new Date().toISOString() }).in('id', batch.map((f: any) => f.id))
       if (updateError) failed.push(updateError.message); else purged += batch.length
     }
-    const { error: staleError } = await admin.from('document_files').update({ status: 'failed', error_message: 'Processing timed out. Try again before the file expires.' }).eq('status', 'processing').lt('processing_started_at', new Date(Date.now() - 15 * 60000).toISOString())
+    const { error: staleError } = await admin.rpc('reconcile_processing_documents')
     if (staleError) failed.push(staleError.message)
     const { data: queued, error: queueError } = await admin.rpc('pending_storage_deletions')
     if (queueError) failed.push(queueError.message)
@@ -74,7 +74,7 @@ export async function runMaintenance(admin: any, actorId: string | null = null) 
     failed.push(...accounts.errors)
     const { data: pruned, error: pruneError } = await admin.rpc('prune_maintenance_records')
     if (pruneError) failed.push(pruneError.message)
-    result = { purged, removed_from_deleted_spaces: removedFromSpaces, accounts_deleted: accounts.deleted, pruned, more_possible: files?.length === 200 || queued?.length === 200 || accounts.more || Object.values(pruned || {}).some(n => n === 1000), errors: failed.slice(0, 20) }
+    result = { purged, removed_from_deleted_spaces: removedFromSpaces, accounts_deleted: accounts.deleted, pruned, more_possible: files?.length === 200 || queued?.length === 200 || accounts.more || Object.values(pruned || {}).some(n => Number(n) >= 1000), errors: failed.slice(0, 20) }
   } catch (error) {
     result = { errors: [error instanceof Error ? error.message : (error as any)?.message || 'Cleanup failed'] }
   }

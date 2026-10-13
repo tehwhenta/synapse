@@ -1,6 +1,6 @@
-# Current update: Synapse 1.7.1
+# Current update: Synapse 1.8.0
 
-Use [GENERATION_RELIABILITY_SETUP.md](GENERATION_RELIABILITY_SETUP.md) to fix alternating generation failures. Run migration 011 after 010 and deploy the latest combined generate-study Dashboard file. For the original automatic upload workflow and removal of Seeds/topic choices, use [AUTOMATIC_GENERATION_SETUP.md](AUTOMATIC_GENERATION_SETUP.md).
+Follow [QUEUE_SETUP.md](QUEUE_SETUP.md) for durable automatic generation and safe admin cleanup. Apply the missing migrations through 011 first; then run 012 and 014, deploy all three updated Dashboard functions, and enable the queue with 013. Deploy the matching frontend too. Earlier upgrade guides describe their original releases.
 
 # Upgrade your existing Synapse project to 1.6
 

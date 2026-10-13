@@ -14,6 +14,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const auth = useAuthStore()
   const folders = ref([]); const assets = ref([]); const documents = ref([]); const members = ref([]); const activities = ref([]); const messages = ref([])
   const attempts = ref([]); const progress = ref([]); const sessions = ref([]); const selectedFolderId = ref(null); const loading = ref(false); const uploading = ref(false); const uploadLabel = ref(''); const error = ref('')
+  const generationTasks = ref([]), generationConnection = ref('')
+  let generationTimer, generationVersion = 0, pollingGeneration = false, generationListening = false
+  const activeGeneration = computed(() => generationTasks.value.filter(t => ['queued','processing'].includes(t.status)))
+  const folderGeneration = computed(() => {const latest=new Map();for(const task of generationTasks.value){const key=task.document_id || task.asset_id;if(!latest.has(key))latest.set(key,task)}return [...latest.values()].filter(t=>t.folder_id===selectedFolderId.value && t.status!=='completed')})
   const moreAssets = ref(false), moreDocuments = ref(false), personalStats = ref(null)
   const documentColumns = 'id,folder_id,material_id,uploaded_by,name,storage_path,mime_type,size_bytes,status,error_message,processing_started_at,expires_at,purged_at,created_at'
   let changeChannel, folderChannel, reloadTimer, workspaceReloadTimer, loadVersion = 0, folderVersion = 0, subscriptionVersion = 0, workspaceSubscriptionVersion = 0
@@ -63,7 +67,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         attempts.value = check(personal[0]); progress.value = check(personal[1]); sessions.value = check(personal[2]); personalStats.value = check(personal[3])
       }
       if (!folders.value.some(f => f.id === selectedFolderId.value)) selectedFolderId.value = folders.value[0]?.id || null
-      if (!auth.demo) await loadFolder()
+      if (!auth.demo) { await loadFolder(); startGenerationMonitor() }
     } catch (err) { error.value = err.message || 'Could not load your workspace.' }
     finally { if (version === loadVersion) loading.value = false }
   }
@@ -100,7 +104,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function selectFolder(id) {
     const changed = id !== selectedFolderId.value; selectedFolderId.value = id; error.value = ''
     if (!auth.demo && changed) { ++folderVersion; assets.value = []; documents.value = []; members.value = []; messages.value = []; moreAssets.value = false; moreDocuments.value = false }
-    try { await loadFolder(); if (id === selectedFolderId.value) await subscribeFolder() } catch (err) { if (id === selectedFolderId.value) error.value = err.message }
+    try { await loadFolder(); if (id === selectedFolderId.value) { await subscribeFolder(); startGenerationMonitor() } } catch (err) { if (id === selectedFolderId.value) error.value = err.message }
   }
   async function createFolder(title, description, color) {
     const folder = auth.demo ? { id: crypto.randomUUID(), title, description, color, owner_id: auth.user.id, created_at: new Date().toISOString() }
@@ -163,20 +167,51 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function refreshAsset(asset) {
     if (auth.demo) throw new Error('Connect Supabase to generate fresh AI study sets.')
     if (!canEdit.value || asset.is_custom) throw new Error('Editor access to an AI study set is required.')
-    if (uploading.value) throw new Error('Wait for the current generation to finish.')
-    uploading.value=true;uploadLabel.value='Completing the ideas…'
-    try {const result=await invokeGeneration({action:'generate',asset_id:asset.id});await loadFolder();return result.asset_id}
-    finally {uploading.value=false;uploadLabel.value='';await loadFolder().catch(()=>{})}
+    return enqueueGeneration({ asset_id:asset.id })
   }
-  async function generateUploadedSets(target) {
-    const completed=[],failures=[]
-    for (const kind of ['note','deck','quiz']) {
-      uploadLabel.value=kind==='note'?'Creating your comprehensive reviewer…':kind==='deck'?'Creating your flashcards…':'Creating your practice quiz…'
-      try {completed.push(await invokeGeneration({action:'generate',document_id:target.document_id,kind,initial:true}));await loadFolder()}
-      catch(e){failures.push({kind,error:e.message});if(/Gemini.*\((400|401|402|403|404|429)|quota exceeded/i.test(e.message))break}
+  function taskForDocument(id) { return generationTasks.value.find(t => t.document_id === id) }
+  async function pollGeneration() {
+    if (pollingGeneration || auth.demo || !auth.user) return
+    clearTimeout(generationTimer)
+    const version=generationVersion, userId=auth.user.id, folderId=selectedFolderId.value
+    pollingGeneration=true
+    try {
+      const rows=check(await supabase.rpc('my_generation_tasks',{p_folder_id:folderId})) || []
+      if (version!==generationVersion || userId!==auth.user?.id) return
+      if (folderId!==selectedFolderId.value) { generationTimer=setTimeout(pollGeneration,0); return }
+      const previous=new Map(generationTasks.value.map(t=>[t.id,t]))
+      const changed=rows.some(t=>t.folder_id===folderId && t.completed_kinds?.length!==(previous.get(t.id)?.completed_kinds?.length || 0))
+      generationTasks.value=rows;generationConnection.value=''
+      if(changed) await loadFolder(new Set(['study_assets','document_files'])).catch(()=>{})
+    } catch {
+      if(version===generationVersion) generationConnection.value='Reconnecting to generation status. Accepted work continues on the server.'
+    } finally {
+      if(version===generationVersion){pollingGeneration=false;if((activeGeneration.value.length || generationConnection.value) && !globalThis.document?.hidden)generationTimer=setTimeout(pollGeneration,globalThis.navigator?.onLine===false?30000:5000)}
     }
-    if (!completed.length) throw new Error(failures[0]?.error || 'Study materials could not be generated.')
-    return {...target,completed,failures}
+  }
+  function wakeGeneration() { if(!globalThis.document?.hidden)void pollGeneration() }
+  function startGenerationMonitor() {
+    if(auth.demo || !auth.user)return
+    if(!generationListening){globalThis.window?.addEventListener('online',wakeGeneration);globalThis.document?.addEventListener('visibilitychange',wakeGeneration);generationListening=true}
+    void pollGeneration()
+  }
+  async function enqueueGeneration(target) {
+    // Keep the same key across a lost acknowledgement or a refreshed tab.
+    const key='synapse.queue.'+auth.user.id+'.'+(target.asset_id || target.document_id)
+    let requestId
+    try {requestId=localStorage.getItem(key)}catch{}
+    requestId=requestId || crypto.randomUUID()
+    try {localStorage.setItem(key,requestId)}catch{}
+    let result
+    for(let attempt=0;attempt<2;attempt++){
+      try {result=await invokeGeneration({action:'enqueue',request_id:requestId,...target});break}
+      catch(err){if(attempt || !err.transient)throw err;await new Promise(resolve=>setTimeout(resolve,700))}
+    }
+    if(!result?.task)throw new Error('The generation service needs the latest project update.')
+    try {localStorage.removeItem(key)}catch{}
+    generationTasks.value=[result.task,...generationTasks.value.filter(t=>t.id!==result.task.id)]
+    startGenerationMonitor()
+    return result.task
   }
   async function createManualDeck(title, cards) {
     if (!canEdit.value) throw new Error('Editor access required.')
@@ -203,7 +238,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
   async function invokeGeneration(body) {
     const response = await supabase.functions.invoke('generate-study', { body })
-    if (response.error) { let message = response.error.message; try { message = (await response.error.context.json()).error || message } catch {}; throw new Error(message) }
+    if (response.error) { let message = response.error.message; try { message = (await response.error.context.json()).error || message } catch {}; const error=new Error(message);error.transient=!response.error.context || response.error.context.status>=500;throw error }
     if (response.data?.error) throw new Error(response.data.error)
     return response.data
   }
@@ -217,17 +252,19 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!canEdit.value || !selectedFolderId.value) throw new Error('Select a folder where you have editor access.')
     if (uploading.value) return
     validateFile(file); uploading.value = true; let documentId
+    const folderId=selectedFolderId.value,userId=auth.user.id
     try {
       uploadLabel.value = 'Reading your document…'
       const text = await extractOfficeText(file)
-      documentId = crypto.randomUUID(); const folderId = selectedFolderId.value
+      if(auth.user?.id!==userId)throw new Error('Your account changed before the upload finished.')
+      documentId = crypto.randomUUID()
       const path = `${folderId}/${auth.user.id}/${documentId}.${file.name.split('.').pop().toLowerCase()}`
       check(await supabase.from('document_files').insert({ id: documentId, folder_id: folderId, uploaded_by: auth.user.id, name: file.name.slice(0, 200), storage_path: path, mime_type: fileType(file.name), size_bytes: file.size }))
       uploadLabel.value = 'Uploading privately…'
       check(await supabase.storage.from('study-files').upload(path, file, { contentType: fileType(file.name), upsert: false }))
+      if(auth.user?.id!==userId)throw new Error('Your account changed before the upload finished.')
       uploadLabel.value = 'Reading your study material…'
-      const result = await invokeGeneration({ action:'prepare',document_id:documentId,text })
-      return await generateUploadedSets({document_id:documentId,material_id:result.material_id})
+      return await enqueueGeneration({document_id:documentId,text})
     } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {}) }
   }
   async function retryDocument(doc) {
@@ -237,8 +274,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     try {
       let text=null
       if(!fileExpiry(doc).expired && !['application/pdf','text/plain'].includes(doc.mime_type) && !doc.mime_type.startsWith('image/')) {const blob=check(await supabase.storage.from('study-files').download(doc.storage_path));text=await extractOfficeText(new File([blob],doc.name,{type:doc.mime_type}))}
-      const prepared=await invokeGeneration({action:'prepare',document_id:doc.id,text})
-      return await generateUploadedSets({document_id:doc.id,material_id:prepared.material_id})
+      return await enqueueGeneration({document_id:doc.id,text})
     } finally { uploading.value = false; uploadLabel.value = ''; await loadFolder().catch(() => {}) }
   }
   async function submitQuiz(asset, answers) {
@@ -288,6 +324,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if (old.folder_id && old.folder_id !== selectedFolderId.value) return
     }
     reloadTables.add(table)
+    if(table==='document_files')startGenerationMonitor()
     if (reloadTimer) return
     reloadTimer = setTimeout(() => { reloadTimer = null; const tables = new Set(reloadTables); reloadTables.clear(); void loadFolder(tables).catch(e => { error.value = e.message }) }, 350)
   }
@@ -337,10 +374,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await subscribeFolder()
   }
   async function dispose() {
+    ++generationVersion;clearTimeout(generationTimer);pollingGeneration=false;generationTasks.value=[];generationConnection.value='';globalThis.window?.removeEventListener('online',wakeGeneration);globalThis.document?.removeEventListener('visibilitychange',wakeGeneration);generationListening=false
     ++loadVersion; ++folderVersion; ++subscriptionVersion; ++workspaceSubscriptionVersion; clearTimeout(reloadTimer); reloadTimer = null; clearTimeout(workspaceReloadTimer); reloadTables.clear()
     const channels = [changeChannel,folderChannel]; changeChannel = null; folderChannel = null
     folders.value = []; assets.value = []; selectedFolderId.value = null; members.value = []; messages.value = []; attempts.value = []; sessions.value = []; progress.value = []; documents.value = []; activities.value = []; moreAssets.value = false; moreDocuments.value = false; personalStats.value = null; loading.value = false
     await Promise.all(channels.filter(Boolean).map(channel => supabase?.removeChannel(channel)))
   }
-  return { updateCustomCard,folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, createManualDeck, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
+  return { generationTasks,activeGeneration,folderGeneration,generationConnection,taskForDocument,pollGeneration,updateCustomCard,folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, createManualDeck, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
 })

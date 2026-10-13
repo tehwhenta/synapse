@@ -21,6 +21,10 @@ const cardIndex = ref(0), flipped = ref(false), reviewed = ref(new Set()), study
 const customDeck=computed(()=>asset.value.kind==='deck' && asset.value.is_custom===true)
 const cardEditing=ref(false),cardDeleting=ref(false),cardDraft=ref({id:'',front:'',back:''})
 const questionIndex = ref(0), answers = ref([]), revealed = ref(false), result = ref(null)
+const requestedTask=ref(null),readySet=ref(null)
+const generating=computed(()=>workspace.generationTasks?.some(t=>['queued','processing'].includes(t.status) && (t.id===requestedTask.value || sets.value.some(s=>s.id===t.asset_id))))
+const generationTask=computed(()=>workspace.generationTasks?.find(t=>t.id===requestedTask.value || sets.value.some(s=>s.id===t.asset_id)))
+watch(()=>workspace.generationTasks,(rows,oldRows=[])=>{const task=rows?.find(t=>t.id===requestedTask.value || (sets.value.some(s=>s.id===t.asset_id) && oldRows.some(old=>old.id===t.id && ['queued','processing'].includes(old.status))));if(task?.status==='completed' && task.result_asset_id){readySet.value=task.result_asset_id;requestedTask.value=null;void loadSets().catch(()=>{})}})
 const sourceDocument = ref(null), refreshWarning = ref(false), now = ref(Date.now())
 let alive = true
 const clock = setInterval(() => { now.value = Date.now() }, 60000)
@@ -88,7 +92,7 @@ async function refresh(useRetained = false) {
   if (asset.value.document_id && sourceState.value.expired && useRetained !== true) { refreshWarning.value = true; return }
   refreshWarning.value = false
   busy.value=true;error.value=''
-  try {const id=await workspace.refreshAsset(asset.value);await loadSets(id);emit('notify','Your new set is ready. Earlier sets are kept.')}
+  try {const task=await workspace.refreshAsset(asset.value);requestedTask.value=task.status==='completed'?null:task.id;readySet.value=task.status==='completed'?task.result_asset_id:null;emit('notify',task.status==='completed'?'Your new set is ready.':'Your new set is being prepared. You can continue studying.')}
   catch(e){error.value=e.message}finally{busy.value=false}
 }
 function moveCard(delta) { cardIndex.value = (cardIndex.value+delta+cards.value.length)%cards.value.length; flipped.value = false }
@@ -146,11 +150,11 @@ onBeforeUnmount(() => { alive = false; clearInterval(clock); finishPrint(); wind
         </div>
       </div>
       <div class="set-toolbar"><nav class="set-navigation" aria-label="Study sets"><span class="tiny muted">SET</span><button class="icon-button" aria-label="Previous set" :disabled="setIndex <= 0 || busy || editing || renaming" @click="selectSet(sets[setIndex-1])"><Icon name="ChevronLeft" :size="16" /></button><div class="set-numbers"><button v-for="set in sets" :key="set.id" :aria-label="'Open set '+(set.set_number || 1)" :aria-current="set.id === asset.id ? 'page' : undefined" :class="{ active:set.id === asset.id }" :disabled="busy || editing || renaming" @click="selectSet(set)">{{ set.set_number || 1 }}</button></div><button class="icon-button" aria-label="Next set" :disabled="setIndex >= sets.length-1 || busy || editing || renaming" @click="selectSet(sets[setIndex+1])"><Icon name="ChevronRight" :size="16" /></button></nav>
-        <button v-if="workspace.canEdit && !customDeck" class="button secondary small" :disabled="busy || workspace.uploading || setsLoading || editing || renaming" @click="refresh">Generate</button>
+        <button v-if="workspace.canEdit && !customDeck" class="button secondary small" :disabled="busy || workspace.uploading || setsLoading || editing || renaming || generating" @click="refresh">Generate</button>
       </div>
       <div v-if="asset.document_id" class="source-notice" :class="{ 'source-expired': sourceState.expired, 'source-soon': sourceState.state === 'soon' }" role="status"><Icon :name="sourceState.expired ? 'TriangleAlert' : 'Clock3'" :size="16" /><div><strong>{{ sourceState.label }}</strong><p>{{ sourceState.expired ? 'Saved materials are kept. New sets use retained text, which may miss diagrams or source details. Re-upload the original for full detail.' : 'Saved materials do not expire. After the original file expires, re-upload it for new sets that need its full details.' }}</p></div><button v-if="sourceState.expired && workspace.canEdit" class="button secondary small" @click="emit('reupload')">Upload again</button></div>
       <div v-if="refreshWarning" class="refresh-warning" role="alert"><strong>Generate from retained text?</strong><p>The original has expired. Some source details may be unavailable, and this uses an AI generation.</p><div class="inline-actions"><button class="button ghost small" @click="refreshWarning = false">Cancel</button><button class="button secondary small" @click="emit('reupload')">Upload original</button><button class="button primary small" @click="refresh(true)">Use retained text</button></div></div>
-      <p v-if="error" role="alert" class="error-box">{{ error }}</p>
+      <p v-if="generationTask?.status==='paused'" class="generation-inline" role="status">{{ generationTask.message }}</p><p v-if="generating" class="generation-inline" role="status">Your new set is being prepared. You can continue studying.</p><p v-if="readySet" class="generation-inline" role="status">Your new set is ready. <button class="button secondary small" @click="loadSets(readySet);readySet=null">Open new set</button></p><p v-if="error" role="alert" class="error-box">{{ error }}</p>
       <div v-if="discard" class="discard-panel"><p>You have unsaved edits.</p><button class="button secondary small" @click="discard = false">Keep editing</button><button class="button danger small" @click="emit('close')">Discard and close</button></div>
       <form v-if="renaming" class="rename-form stack-form" @submit.prevent="saveTitle"><label>Title for this set<input v-model="title" required maxlength="150" /></label><div class="inline-actions"><button type="button" class="button secondary small" :disabled="busy" @click="renaming = false">Cancel</button><button class="button primary small" :disabled="busy || !title.trim()">Save title<Icon name="Check" :size="15" /></button></div></form>
       <template v-if="asset.kind === 'note'">
