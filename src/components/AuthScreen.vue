@@ -9,7 +9,7 @@ const mode = ref('signin'), name = ref(''), email = ref(''), password = ref(''),
 const showPassword = ref(false), showConfirmation = ref(false)
 const verifying = computed(() => !!auth.pendingOtp && !auth.recovering)
 const cooldown = computed(() => Math.max(0, Math.ceil(((auth.pendingOtp?.sentAt || 0) + 60000 - now.value) / 1000)))
-const heading = computed(() => auth.recovering ? 'Choose a new password.' : verifying.value ? auth.pendingOtp.type === 'recovery' ? 'Check your reset code.' : 'Confirm your email.' : mode.value === 'signup' ? 'Create your account.' : mode.value === 'reset' ? 'Reset your password.' : mode.value === 'confirm' ? 'Confirm your email.' : 'Welcome back.')
+const heading = computed(() => auth.recovering ? 'Choose a new password.' : verifying.value ? auth.pendingOtp.type === 'recovery' ? 'Check your reset code.' : 'Confirm your email.' : mode.value === 'signup' ? 'Create your account.' : mode.value === 'reset' ? 'Reset your password.' : mode.value === 'confirm' ? 'Confirm your email.' : 'Hello there!')
 const timer = setInterval(() => { now.value = Date.now() }, 1000)
 onBeforeUnmount(() => clearInterval(timer))
 function changeMode(value) { mode.value = value; auth.clearPendingOtp(); code.value = ''; password.value = ''; confirmation.value = ''; showPassword.value = false; showConfirmation.value = false; error.value = ''; message.value = ''; auth.error = '' }

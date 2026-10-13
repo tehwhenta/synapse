@@ -33,7 +33,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (accountDeletion.value?.reason === 'inactive' && accountDeletion.value.status === 'pending' && new Date(accountDeletion.value.delete_after).getTime() > Date.now()) {
       const activity = await supabase.rpc('mark_app_activity')
       if (version !== profileVersion || id !== user.value?.id) return
-      if (!activity.error) { accountDeletion.value = null; notice.value = 'Welcome back. Your inactive-account cleanup was cancelled.' }
+      if (!activity.error) { accountDeletion.value = null; notice.value = 'Hello there! Your inactive-account cleanup was cancelled.' }
     }
     if (accountDeletion.value) { accountReady.value = false; profile.value = null; return }
     const [result, admin] = await Promise.all([
