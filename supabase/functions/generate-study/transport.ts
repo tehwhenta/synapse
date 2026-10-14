@@ -1,5 +1,6 @@
 import { GeminiRequestError, StudyDraftError } from './errors.ts'
 import type { GenerationMetrics } from './metrics.ts'
+import { readGeminiStream } from './stream.ts'
 
 const geminiBase = 'https://generativelanguage.googleapis.com'
 // Keep Google's actionable error without logging request bodies, keys, or file URLs.
@@ -76,30 +77,54 @@ async function generatedText(apiKey: string, prompt: string, parts: Record<strin
   const config: Record<string, unknown> = {maxOutputTokens:tokens,responseMimeType:json?'application/json':'text/plain'}
   // Google's guidance recommends the default temperature for Gemini 3 models.
   if (!/^gemini-3/.test(model)) config.temperature=temperature
-  const started=metrics?.now() ?? 0
-  if(metrics){metrics.values.gemini_calls++;metrics.values.model=model}
+  const clock=()=>metrics?.now() ?? performance.now(),started=clock()
+  const controller=new AbortController()
+  const timeout=setTimeout(()=>controller.abort(new DOMException('Generation deadline exceeded','TimeoutError')),Math.max(1000,Math.floor(timeoutMs)))
+  let idle:ReturnType<typeof setTimeout>,usage:any,output='',finishReason='',first=true
+  const touch=()=>{clearTimeout(idle);idle=setTimeout(()=>controller.abort(new DOMException('Generation stream stalled','TimeoutError')),60000)}
+  if(metrics){metrics.values.gemini_calls++;metrics.values.model=model;metrics.progress?.(metrics.values.gemini_calls,0)}
+  touch()
   try {
-  let response: Response
-  try {
-    response = await fetch(`${geminiBase}/v1beta/models/${model}:generateContent`, { method:'POST',headers:{ 'Content-Type':'application/json','x-goog-api-key':apiKey },body:JSON.stringify({ systemInstruction:{ parts:[{ text:prompt }] },contents:[{ role:'user',parts }],generationConfig:config }),signal:AbortSignal.timeout(Math.max(1000,Math.floor(timeoutMs))) })
-  } catch (error) {
-    if (error instanceof Error && ['TimeoutError','AbortError'].includes(error.name)) throw new GeminiRequestError(408,'Gemini timed out before completing the draft. Earlier sets remain available.')
-    if (error instanceof TypeError) throw new GeminiRequestError(503,'Gemini could not be reached. Earlier sets remain available.')
-    throw error
+   const response=await fetch(`${geminiBase}/v1beta/models/${model}:streamGenerateContent?alt=sse`, { method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},body:JSON.stringify({systemInstruction:{parts:[{text:prompt}]},contents:[{role:'user',parts}],generationConfig:config}),signal:controller.signal })
+   if(!response.ok)throw await geminiFailure(response,apiKey,'request',model)
+   function receive(payload:any){
+    touch()
+    if(payload?.error)throw new GeminiRequestError(Number(payload.error.code)||503,'Gemini interrupted the response stream. Earlier sets remain available.')
+    if(payload.usageMetadata)usage=payload.usageMetadata // Cumulative, not additive per chunk.
+    const candidate=payload?.candidates?.[0]
+    if(candidate?.finishReason)finishReason=candidate.finishReason
+    const delta=(candidate?.content?.parts || []).filter((p:any)=>typeof p.text==='string' && !p.thought).map((p:any)=>p.text).join('')
+    if(delta){
+     output+=delta
+     if(metrics){
+      metrics.values.stream_chunks++
+      if(first && metrics.values.first_token_ms===null)metrics.values.first_token_ms=Math.round(clock()-started)
+      metrics.progress?.(metrics.values.gemini_calls,output.length)
+     }
+     first=false
+    }
+   }
+   // Non-SSE JSON remains supported for proxies and deterministic test fixtures.
+   if(response.headers?.get('content-type')?.includes('text/event-stream'))await readGeminiStream(response,receive,controller.signal)
+   else {let payload;try{payload=await response.json()}catch{controller.signal.throwIfAborted();throw new StudyDraftError('format','Gemini returned an unreadable response.')};receive(payload)}
+   controller.signal.throwIfAborted()
+   if(finishReason==='MAX_TOKENS')throw new StudyDraftError('truncated','Gemini reached its output limit before finishing. Saved sets remain available.')
+   if(!finishReason)throw new StudyDraftError('format','Gemini stream ended before the study set was complete.')
+   if(finishReason!=='STOP')throw new Error('Gemini could not complete this source. Try a readable chapter; saved sets remain available.')
+   const text=output.trim()
+   if(!text)throw new StudyDraftError('empty','Gemini returned an empty response.')
+   if(metrics)metrics.values.output_chars+=text.length
+   return text
+  }catch(error){
+   if(controller.signal.aborted || error instanceof Error && ['TimeoutError','AbortError'].includes(error.name))throw new GeminiRequestError(408,'Gemini timed out before completing the draft. Earlier sets remain available.')
+   if(error instanceof TypeError)throw new GeminiRequestError(503,'Gemini could not be reached. Earlier sets remain available.')
+   throw error
+  }finally{
+   clearTimeout(timeout);clearTimeout(idle!)
+   if(metrics){metrics.values.gemini_ms+=clock()-started;metrics.usage(model,usage)}
   }
-  if (!response.ok) throw await geminiFailure(response,apiKey,'request',model)
-  let payload: any
-  try { payload=await response.json() } catch { throw new StudyDraftError('format','Gemini returned an unreadable response.') }
-  metrics?.usage(model,payload.usageMetadata)
-  const candidate = payload?.candidates?.[0]
-  if (candidate?.finishReason === 'MAX_TOKENS') throw new StudyDraftError('truncated','Gemini reached its output limit before finishing. Saved sets remain available.')
-  if (candidate?.finishReason !== 'STOP') throw new Error('Gemini could not complete this source. Try a readable chapter; saved sets remain available.')
-  const text=(candidate.content?.parts || []).filter((p: { text?: string; thought?: boolean }) => typeof p.text==='string' && !p.thought).map((p: { text: string }) => p.text).join('').trim()
-  if (!text) throw new StudyDraftError('empty','Gemini returned an empty response.')
-  if(metrics)metrics.values.output_chars+=text.length
-  return text
-  }finally{if(metrics)metrics.values.gemini_ms+=metrics.now()-started}
 }
+
 export function parseStudyJson(text: string) {
   const clean=text.replace(/^\uFEFF/,'').trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i,'$1').trim()
   try { return JSON.parse(clean) }

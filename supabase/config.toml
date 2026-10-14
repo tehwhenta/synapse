@@ -25,3 +25,7 @@ verify_jwt = false
 
 [functions.admin-maintenance]
 verify_jwt = false
+
+# Keep background workers alive in local CLI tests, as on hosted Supabase.
+[edge_runtime]
+policy = "per_worker"

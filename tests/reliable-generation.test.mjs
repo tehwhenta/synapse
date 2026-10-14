@@ -70,7 +70,7 @@ test('Malformed, empty, truncated and premature-exhaustion drafts recover within
   for(const code of ['format','empty','truncated','exhausted']){
     let drafts=0,saves=0
     const result=await runDraftPipeline({deadline:Date.now()+130000,generate:async(revision,timeout)=>{
-      drafts++;assert.ok(timeout<=60000)
+      drafts++;assert.ok(timeout<=120000)
       if(drafts===1)throw new StudyDraftError(code,'Mock first draft defect')
       assert.match(revision,/DRAFT REVISION/);return {flashcards:[{front:'How does a queue preserve arrival order?',back:'Insertion at the rear and removal at the front.'}]}
     },validate:raw=>validateAutomatic(raw,'deck'),save:async output=>{saves++;return output}})
@@ -93,7 +93,7 @@ test('Persistent invalid output stops after three drafts; the total deadline and
   assert.equal(calls,3);assert.equal(saves,0)
   let elapsed=0;calls=0
   await assert.rejects(runDraftPipeline({deadline:130000,now:()=>elapsed,generate:async(_revision,timeout)=>{calls++;elapsed+=timeout;throw new StudyDraftError('format','Still incomplete')},validate:()=>({}),save:async()=>{throw new Error('must not save')}}),/Still incomplete/)
-  assert.equal(calls,2);assert.equal(elapsed,120000)
+  assert.equal(calls,1);assert.equal(elapsed,120000)
   for(const status of [400,401,402,403,404,429]){
     calls=0
     await assert.rejects(runDraftPipeline({deadline:Date.now()+130000,generate:async()=>{calls++;throw new GeminiRequestError(status,'provider rejection '+status)},validate:()=>({}),save:async()=>({})}),new RegExp(String(status)))

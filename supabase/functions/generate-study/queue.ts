@@ -2,7 +2,7 @@ import { executeGeneration } from './engine.ts'
 import { GeminiRequestError, StudyDraftError } from './errors.ts'
 import { generationRequestBudgetMs } from './reliable.ts'
 import { UploadReadError, unreadableUploadMessage } from '../_shared/uploadTypes.ts'
-import { GenerationMetrics, reportGenerationMetrics } from './metrics.ts'
+import { GenerationMetrics, reportGenerationMetrics, generationProgressReporter } from './metrics.ts'
 
 export const minimumContinuationBudgetMs=70000
 
@@ -33,6 +33,8 @@ export async function runQueuedGeneration(admin: any, ticket: any) {
  // apply to EVERY continuation; no parallel provider calls inside one task.
  for(let stage=0;stage<4;stage++){
   const metrics=new GenerationMetrics()
+  const progress=generationProgressReporter(admin,task)
+  metrics.progress=progress.update
   let succeeded=false
   try {
    const input:any={action:task.stage==='prepare'?'prepare':'generate',text:task.source_text}
@@ -51,6 +53,7 @@ export async function runQueuedGeneration(admin: any, ticket: any) {
    const deferred=await admin.rpc('defer_generation_task',{p_task_id:task.id,p_lease:task.lease_token,p_error:message,p_retry_seconds:recovery.seconds,p_message:recovery.message,p_provider_busy:recovery.providerBusy})
    if(deferred.error)throw deferred.error
   } finally {
+   await progress.close()
    await reportGenerationMetrics(admin,task,metrics)
   }
   if(succeeded && stage<3 && (task.stage==='prepare' || task.document_id && !task.kind) && deadline-Date.now()>=minimumContinuationBudgetMs){

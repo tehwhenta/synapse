@@ -1,3 +1,4 @@
+import { safeColumnWidths } from './tableDimensions.js'
 import katex from 'katex'
 import { noteHtml, escapeHtml } from './richText.js'
 
@@ -6,6 +7,20 @@ export function renderStudyHtml(content, format = 'markdown') {
   for (const node of el.querySelectorAll('[data-type="inline-math"],[data-type="block-math"]')) {
     const latex = node.getAttribute('data-latex') || ''
     katex.render(latex, node, { displayMode: node.dataset.type === 'block-math', throwOnError: false, trust: false, maxExpand: 100, maxSize: 20, strict: 'ignore' })
+  }
+  for(const table of el.querySelectorAll('table')) {
+    const widths=[]
+    for(const row of table.rows){let column=0;for(const cell of row.cells){
+      const values=safeColumnWidths(cell.getAttribute('colwidth')) || []
+      for(let i=0;i<cell.colSpan;i++)if(values[i])widths[column+i]=Math.max(widths[column+i] || 0,values[i])
+      column+=cell.colSpan
+    }}
+    if(widths.some(Boolean)){
+      const group=document.createElement('colgroup')
+      for(const width of widths){const col=document.createElement('col');if(width)col.style.width=width+'px';group.append(col)}
+      table.prepend(group);table.style.tableLayout='fixed';table.style.minWidth=widths.reduce((sum,w)=>sum+(w || 48),0)+'px'
+    }
+    const wrapper=document.createElement('div');wrapper.className='tableWrapper';table.replaceWith(wrapper);wrapper.append(table)
   }
   return el.innerHTML
 }

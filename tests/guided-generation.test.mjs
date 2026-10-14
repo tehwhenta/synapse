@@ -62,7 +62,7 @@ test('Gemini errors preserve actionable 400 details, redact credentials, and do 
   globalThis.Deno={env:{get:()=> ' models/gemini-3.5-flash-lite '}}
   console.error=(...args)=>logs.push(args.join(' '))
   globalThis.fetch=async(url,request)=>{
-    calls++;assert.equal(String(url),'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent')
+    calls++;assert.equal(String(url),'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:streamGenerateContent?alt=sse')
     assert.equal(request.headers['x-goog-api-key'],key)
     return Response.json({error:{code:400,status:'INVALID_ARGUMENT',message:'Request contains an invalid argument. '+key+' Bearer private-token https://example.invalid/file?key='+key,details:[{fieldViolations:[{field:'generation_config.response_json_schema',description:'Too many states in the response schema.'}]}]}},{status:400})
   }

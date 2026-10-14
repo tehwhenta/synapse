@@ -12,6 +12,7 @@ const resumeTime=computed(()=>props.task.status==='paused' && props.task.auto_re
   <div class="generation-progress-label"><span>{{ label }}</span><span v-if="percent !== null">{{ percent }}%</span></div>
   <progress v-if="percent !== null" :value="percent" max="100" :aria-label="label"></progress>
   <progress v-else max="100" :aria-label="label"></progress>
+  <p v-if="task.status==='processing' && task.stream_chars>0" class="tiny muted generation-stream-status">Receiving {{ {prepare:'source text',note:'reviewer',deck:'flashcards',quiz:'quiz'}[task.stage] || 'content' }} · {{ task.stream_chars.toLocaleString() }} characters received. Checking before saving.</p>
   <p v-if="resumeTime" class="tiny muted">Continues automatically around {{ resumeTime }}. You can keep studying.</p>
  </div>
 </template>

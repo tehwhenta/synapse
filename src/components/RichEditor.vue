@@ -3,6 +3,7 @@ import { ref, watch, onBeforeUnmount } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import { TableKit } from '@tiptap/extension-table'
+import { ResizableTableRow } from '../lib/tableResize'
 import TextAlign from '@tiptap/extension-text-align'
 import { Mathematics } from '@tiptap/extension-mathematics'
 import { noteHtml, cleanHtml } from '../lib/richText'
@@ -19,7 +20,7 @@ let highlightTimer, applyingHighlight = false
 const mathOpen = ref(false), formula = ref(''), mathBlock = ref(true), mathPosition = ref(null)
 function editMath(node, pos, block) { formula.value = node.attrs.latex; mathPosition.value = pos; mathBlock.value = block; mathOpen.value = true }
 const editor = useEditor({
-  extensions: [StarterKit.configure({ heading: { levels: [1,2,3] }, link: { openOnClick: false } }), Highlight, Comment, AnnotationAnchors, TableKit.configure({ table: { resizable: false } }), TextAlign.configure({ types: ['heading','paragraph'] }), Mathematics.configure({ katexOptions: { trust: false, throwOnError: false, maxExpand: 100, maxSize: 20 }, inlineOptions: { onClick: (node,pos) => editMath(node,pos,false) }, blockOptions: { onClick: (node,pos) => editMath(node,pos,true) } })],
+  extensions: [StarterKit.configure({ heading: { levels: [1,2,3] }, link: { openOnClick: false } }), Highlight, Comment, AnnotationAnchors, TableKit.configure({ table: { resizable: true, cellMinWidth: 48, handleWidth: 7, renderWrapper: true }, tableRow: false }), ResizableTableRow, TextAlign.configure({ types: ['heading','paragraph'] }), Mathematics.configure({ katexOptions: { trust: false, throwOnError: false, maxExpand: 100, maxSize: 20 }, inlineOptions: { onClick: (node,pos) => editMath(node,pos,false) }, blockOptions: { onClick: (node,pos) => editMath(node,pos,true) } })],
   content: noteHtml(props.modelValue, props.format),
   editorProps: { attributes: { class: 'markdown rich-editor-content', 'aria-label': 'Reviewer editor', role: 'textbox', 'aria-multiline': 'true' }, handleDOMEvents: { keydown: (_view,event) => { if (event.key === 'Escape' && highlightEnabled.value) { event.preventDefault(); event.stopPropagation(); highlightEnabled.value = false; return true }; return false } } },
   onUpdate: ({ editor: current }) => emit('update:modelValue', cleanHtml(current.getHTML())),
@@ -59,6 +60,20 @@ function setDrawingMode(mode) {
   }
   editor.value.setEditable(drawingMode.value === 'text')
 }
+function eraseHighlight({x,y}) {
+  const current=editor.value
+  if(!current || drawingMode.value!=='erase')return
+  // The SVG receives pointer events; inspect the text underneath, within this editor only.
+  const marks=new Set((document.elementsFromPoint?.(x,y) || []).map(el=>el.closest?.('mark')).filter(el=>el && current.view.dom.contains(el)))
+  let tr=current.state.tr
+  for(const mark of marks){
+    try{
+      const from=current.view.posAtDOM(mark,0),to=current.view.posAtDOM(mark,mark.childNodes.length)
+      if(to>from)tr=tr.removeMark(from,to,current.schema.marks.highlight)
+    }catch{} // A prior eraser sample can already have removed this DOM node.
+  }
+  if(tr.docChanged)current.view.dispatch(tr)
+}
 function updateDrawings(value) { emit('update:annotations',cleanAnnotations(value)) }
 onBeforeUnmount(() => { clearTimeout(highlightTimer); editor.value?.destroy() })
 </script>
@@ -83,7 +98,7 @@ onBeforeUnmount(() => { clearTimeout(highlightTimer); editor.value?.destroy() })
       <button type="button" aria-label="Undo" title="Undo (Ctrl+Z)" @mousedown.prevent @click="command('undo')"><Icon name="Undo2" :size="17" /></button>
       <button type="button" aria-label="Redo" title="Redo" @mousedown.prevent @click="command('redo')"><Icon name="Redo2" :size="17" /></button>
       <button type="button" aria-label="Draw on reviewer" title="Draw on reviewer" :aria-pressed="drawingMode === 'pen'" @mousedown.prevent @click="setDrawingMode('pen')"><Icon name="PenLine" :size="17" /></button>
-      <button type="button" aria-label="Erase a drawing" title="Click a drawn stroke to erase it" :aria-pressed="drawingMode === 'erase'" :disabled="!annotations.length" @mousedown.prevent @click="setDrawingMode('erase')"><Icon name="Eraser" :size="17" /></button>
+      <button type="button" aria-label="Erase drawings and highlights" title="Click or drag over drawings and highlighted text to erase" :aria-pressed="drawingMode === 'erase'" @mousedown.prevent @click="setDrawingMode('erase')"><Icon name="Eraser" :size="17" /></button>
     </div>
     <div v-if="drawingMode !== 'text'" class="drawing-toolbar"><button type="button" class="button secondary small" @click="setDrawingMode(drawingMode)">Return to text</button><label>Color<input type="color" v-model="penColor" aria-label="Pen color" /></label><label>Thickness<input type="range" v-model.number="penWidth" min="1" max="12" aria-label="Pen thickness" /><span>{{ penWidth }} px</span></label><button type="button" class="button ghost small" :disabled="!annotations.length" @click="updateDrawings(annotations.slice(0,-1))">Undo drawing</button></div>
     <div v-if="commentOpen" class="annotation-editor stack-form"><label>Note for the selected text<textarea v-model="commentText" maxlength="1000" rows="3" placeholder="Write your annotation…" /></label><div class="inline-actions"><button type="button" class="button ghost small" @click="command('unsetMark','comment'); commentOpen = false">Remove note</button><button type="button" class="button secondary small" @click="commentOpen = false">Cancel</button><button type="button" class="button primary small" :disabled="!commentText.trim()" @click="saveComment">Save annotation</button></div></div>
@@ -91,8 +106,8 @@ onBeforeUnmount(() => { clearTimeout(highlightTimer); editor.value?.destroy() })
     <div v-if="mathOpen" class="equation-editor stack-form"><label>Equation<textarea v-model="formula" rows="2" maxlength="2000" placeholder="e.g. x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}"></textarea></label><label v-if="mathPosition == null" class="checkbox-label"><input v-model="mathBlock" type="checkbox" /> Display on its own line</label><p class="tiny muted">Use LaTeX here. Your reviewer displays the formatted equation.</p><div class="inline-actions"><button type="button" class="button secondary small" @click="mathOpen = false">Cancel</button><button type="button" class="button primary small" :disabled="!formula.trim()" @click="insertMath">{{ mathPosition == null ? 'Insert' : 'Update' }} equation</button></div></div>
     <p v-if="highlightEnabled" class="highlight-mode-hint" role="status">Highlight is on. Select more text to keep highlighting; click the tool again or press Escape to stop.</p>
     </div>
-    <div ref="paper" class="annotated-paper"><EditorContent :editor="editor" /><DrawingLayer :host="paper" :model-value="annotations" :active="drawingMode !== 'text'" :mode="drawingMode" :color="penColor" :width="penWidth" @update:model-value="updateDrawings" @error="drawingError = $event" /></div>
+    <div ref="paper" class="annotated-paper"><EditorContent :editor="editor" /><DrawingLayer :host="paper" :model-value="annotations" :active="drawingMode !== 'text'" :mode="drawingMode" :color="penColor" :width="penWidth" @update:model-value="updateDrawings" @error="drawingError = $event" @erase="eraseHighlight" /></div>
     <p v-if="drawingError" class="tiny error-text" role="alert">{{ drawingError }}</p>
-    <p class="editor-hint tiny muted">{{ drawingMode === 'text' ? 'Select text to format, highlight, or annotate it. Click an equation to edit it.' : drawingMode === 'erase' ? 'Click a drawn stroke to remove it.' : 'Draw directly over the reviewer. Drawings follow their paragraphs; finish wording changes before drawing for the best alignment.' }}</p>
+    <p class="editor-hint tiny muted">{{ drawingMode === 'text' ? 'Select text to format, highlight, or annotate it. Click an equation to edit it. Drag table column borders or the bottom edge of a row to resize.' : drawingMode === 'erase' ? 'Click or drag over a drawing or highlighted text to remove it.' : 'Draw directly over the reviewer. Strokes stay inside the reviewer; finish wording and table sizing before drawing for the best alignment.' }}</p>
   </div>
 </template>

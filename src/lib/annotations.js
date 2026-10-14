@@ -1,3 +1,10 @@
+// Reserved whole-paper anchor keeps a stroke continuous across paragraphs/tables.
+export const PAPER_ANCHOR = 'synapse-paper-v1'
+export function distanceToSegment(point,a,b) {
+  const dx=b[0]-a[0],dy=b[1]-a[1],length=dx*dx+dy*dy
+  const t=length?Math.max(0,Math.min(1,((point[0]-a[0])*dx+(point[1]-a[1])*dy)/length)):0
+  return Math.hypot(point[0]-a[0]-t*dx,point[1]-a[1]-t*dy)
+}
 export const validAnchor = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value)
 export const validColor = value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)
 
@@ -15,13 +22,14 @@ export function annotatedHtml(html, annotations) {
   for (const stroke of cleanAnnotations(annotations)) {
     const items = grouped.get(stroke.anchor) || []; items.push(stroke); grouped.set(stroke.anchor, items)
   }
-  for (const block of root.querySelectorAll('[data-annotation-id]')) {
+  root.dataset.annotationId=PAPER_ANCHOR
+  for (const block of [root,...root.querySelectorAll('[data-annotation-id]')]) {
     const strokes = grouped.get(block.dataset.annotationId)
     if (!strokes?.length) continue
     block.style.position = 'relative'
     const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg')
     svg.setAttribute('class', 'saved-drawing'); svg.setAttribute('viewBox', '0 0 1000 1000'); svg.setAttribute('preserveAspectRatio', 'none'); svg.setAttribute('aria-hidden', 'true')
-    svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:20'
+    svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:hidden;z-index:20'
     for (const stroke of strokes) {
       const line = document.createElementNS(ns, 'polyline')
       line.setAttribute('points', stroke.points.map(([x,y]) => `${x * 1000},${y * 1000}`).join(' '))
@@ -30,5 +38,6 @@ export function annotatedHtml(html, annotations) {
     }
     block.append(svg)
   }
+  if(grouped.has(PAPER_ANCHOR)){root.style.cssText='position:relative;isolation:isolate;overflow:hidden';return root.outerHTML}
   return root.innerHTML
 }

@@ -1,3 +1,5 @@
+> Current release: **1.9.0**. After completing the 1.8.2 steps below, use [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md) for SQL 018 and the current generate-study function.
+
 # Synapse 1.8.2 — concurrent uploads and generation timings
 
 This update lets **3 study stages run overall**, with **up to 2 per account** on different materials. A third upload from the same account waits safely. A material still has only one active stage, including when shared editors use it. Saved sets, source details, custom flashcards and study progress stay intact.

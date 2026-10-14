@@ -1,12 +1,12 @@
-# Current update: Synapse 1.8.2
+# Current update: Synapse 1.9.0
 
-Follow [GENERATION_PERFORMANCE_SETUP.md](GENERATION_PERFORMANCE_SETUP.md) for 3 concurrent tasks overall, up to 2 per account, faster cached-source stages and private admin timing measurements. If 1.8.1 works, run 017, redeploy generate-study, then deploy the matching frontend. Keep the existing 15-second queue schedule and earlier successful migrations.
+Follow [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md) for streamed generation, immediate background-worker acknowledgement, bounded drawings, highlight erasing and draggable table dimensions. If 1.8.2 works, run 018, redeploy generate-study, then deploy the matching frontend.
 
 # Synapse
 
 A Vue 3 study workspace, designed around your cream, sand, taupe, olive, and warm brown palette.
 
-**Already installed Synapse? Start with [GENERATION_PERFORMANCE_SETUP.md](GENERATION_PERFORMANCE_SETUP.md).** Older release guides are historical. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
+**Already installed Synapse? Start with [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md).** Older release guides are historical. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
 
 ## Start here
 

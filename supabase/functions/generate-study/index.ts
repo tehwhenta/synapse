@@ -18,6 +18,15 @@ Deno.serve(async req=>{
    if(!Deno.env.get('CRON_SECRET') || req.headers.get('x-cron-secret')!==Deno.env.get('CRON_SECRET'))return respond({error:'Unauthorized'},401)
    const ticket=await req.json()
    if(!ticket?.task_id || !ticket?.lease_token)return respond({error:'Worker ticket required'},400)
+   const runtime=(globalThis as any).EdgeRuntime
+   if(typeof runtime?.waitUntil==='function'){
+    // Release the dispatcher connection immediately; the persisted lease owns
+    // this task. Cron recovers an interrupted runtime without a second user click.
+    runtime.waitUntil(runQueuedGeneration(admin,ticket).catch(error=>{
+     console.error('Background generation interrupted:',ticket.task_id,(error instanceof Error?error.message:'Worker unavailable').slice(0,300))
+    }))
+    return respond({accepted:true},202)
+   }
    return respond(await runQueuedGeneration(admin,ticket))
   }
   const token=req.headers.get('authorization')?.replace(/^Bearer\s+/i,'')

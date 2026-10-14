@@ -1,10 +1,12 @@
 <script setup>
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
-import { cleanAnnotations } from '../lib/annotations'
+import { cleanAnnotations, PAPER_ANCHOR, distanceToSegment } from '../lib/annotations'
 const props = defineProps({ modelValue: { type: Array, default: () => [] }, host: Object, active: Boolean, mode: { type: String, default: 'pen' }, color: { type: String, default: '#c2413a' }, width: { type: Number, default: 3 } })
-const emit = defineEmits(['update:modelValue', 'error'])
+const emit = defineEmits(['update:modelValue', 'error', 'erase'])
 const surface = ref(null), geometry = ref({ width: 1, height: 1, anchors: {} }), current = ref(null)
-let observer, mutationObserver, frame, pointerId = null, alive = true
+let observer, mutationObserver, frame, pointerId = null, alive = true, lastErase = null
+let localStrokes = cleanAnnotations(props.modelValue)
+watch(() => props.modelValue, value => { localStrokes=cleanAnnotations(value) }, {deep:true})
 const strokes = computed(() => [...cleanAnnotations(props.modelValue), ...(current.value ? [current.value] : [])])
 const paths = computed(() => strokes.value.flatMap(stroke => {
   const anchor = geometry.value.anchors[stroke.anchor]
@@ -17,6 +19,7 @@ function measure() {
     const rect = node.getBoundingClientRect()
     if (rect.width && rect.height) anchors[node.dataset.annotationId] = { x: rect.left-bounds.left, y: rect.top-bounds.top, width: rect.width, height: rect.height }
   }
+  anchors[PAPER_ANCHOR]={x:0,y:0,width:Math.max(1,bounds.width),height:Math.max(1,bounds.height)}
   geometry.value = { width: Math.max(1,bounds.width), height: Math.max(1,bounds.height), anchors }
 }
 function queueMeasure() { if (!frame) frame = requestAnimationFrame(() => { frame = null; measure() }) }
@@ -26,56 +29,70 @@ watch(() => props.host, async host => {
   if (!host || !alive) return
   if (typeof ResizeObserver !== 'undefined') { observer = new ResizeObserver(queueMeasure); observer.observe(host) }
   mutationObserver = new MutationObserver(changes => { if (changes.some(change => !change.target.closest?.('.drawing-layer'))) queueMeasure() })
-  mutationObserver.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-annotation-id'] })
+  mutationObserver.observe(host, { childList: true, characterData:true, subtree: true, attributes: true, attributeFilter: ['data-annotation-id','style','colwidth'] })
   measure()
 }, { immediate: true })
-watch(() => props.active, active => { if (!active) commit(); queueMeasure() })
+watch(() => props.active, active => { if (!active) finish(); queueMeasure() })
 function locate(event) {
-  const bounds = props.host.getBoundingClientRect(), x = event.clientX-bounds.left, y = event.clientY-bounds.top
-  let chosen, distance = Infinity
-  for (const [id,rect] of Object.entries(geometry.value.anchors)) {
-    const dx = Math.max(rect.x-x, 0, x-rect.x-rect.width), dy = Math.max(rect.y-y, 0, y-rect.y-rect.height)
-    const score = dx*dx+dy*dy
-    if (score < distance) { distance = score; chosen = [id,rect] }
-  }
-  if (!chosen) return null
-  const [id,rect] = chosen
-  return { id, point: [Math.max(0,Math.min(1,(x-rect.x)/rect.width)), Math.max(0,Math.min(1,(y-rect.y)/rect.height))].map(n => Math.round(n*10000)/10000) }
+  const bounds=props.host.getBoundingClientRect(),x=event.clientX-bounds.left,y=event.clientY-bounds.top
+  if(x<0 || y<0 || x>bounds.width || y>bounds.height)return null
+  return {id:PAPER_ANCHOR,point:[x/Math.max(1,bounds.width),y/Math.max(1,bounds.height)].map(n=>Math.round(n*10000)/10000),x,y}
 }
 function startStroke(position) {
-  if (props.modelValue.length >= 150) { emit('error','This reviewer has many drawings. Remove a few before adding more.'); return }
+  if (localStrokes.length >= 150) { emit('error','This reviewer has many drawings. Remove a few before adding more.'); return }
   current.value = { id: crypto.randomUUID(), anchor: position.id, color: props.color, width: props.width, points: [position.point,position.point] }
 }
-function down(event) {
-  if (!props.active || event.button !== 0) return
-  event.preventDefault()
-  if (props.mode === 'erase') {
-    const id = event.target.dataset.strokeId
-    if (id) emit('update:modelValue', cleanAnnotations(props.modelValue).filter(stroke => stroke.id !== id))
-    return
+function eraseAt(event) {
+  const position=locate(event)
+  if(!position){lastErase=null;return}
+  const previous=lastErase || {x:event.clientX,y:event.clientY}
+  const steps=Math.max(1,Math.min(500,Math.ceil(Math.hypot(event.clientX-previous.x,event.clientY-previous.y)/6)))
+  const bounds=props.host.getBoundingClientRect(),removed=new Set()
+  for(let i=1;i<=steps;i++){
+    const x=previous.x+(event.clientX-previous.x)*i/steps,y=previous.y+(event.clientY-previous.y)*i/steps
+    for(const stroke of localStrokes){
+      const rect=geometry.value.anchors[stroke.anchor];if(!rect || removed.has(stroke.id))continue
+      const points=stroke.points.map(([px,py])=>[rect.x+px*rect.width,rect.y+py*rect.height])
+      if(points.some((point,j)=>j && distanceToSegment([x-bounds.left,y-bounds.top],points[j-1],point)<=7+stroke.width/2))removed.add(stroke.id)
+    }
+    emit('erase',{x,y})
   }
-  measure(); const position = locate(event)
-  if (!position) return
-  pointerId = event.pointerId; surface.value.setPointerCapture?.(pointerId); startStroke(position)
+  if(removed.size){localStrokes=localStrokes.filter(stroke=>!removed.has(stroke.id));emit('update:modelValue',localStrokes)}
+  lastErase={x:event.clientX,y:event.clientY}
+}
+function down(event) {
+  if (!props.active || event.button !== 0 || pointerId!==null) return
+  measure();const position=locate(event);if(!position)return
+  event.preventDefault();pointerId=event.pointerId;surface.value.setPointerCapture?.(pointerId)
+  if(props.mode==='erase')eraseAt(event)
+  else startStroke(position)
 }
 function move(event) {
-  if (!current.value || event.pointerId !== pointerId) return
-  const position = locate(event)
-  if (!position) return
-  if (position.id !== current.value.anchor || current.value.points.length >= 500) { commit(); startStroke(position) }
-  else current.value.points.push(position.point)
+  if(event.pointerId!==pointerId)return
+  if(props.mode==='erase'){eraseAt(event);return}
+  const coalesced=event.getCoalescedEvents?.()
+  const samples=coalesced?.length?coalesced:[event]
+  for(const sample of samples){
+    const position=locate(sample)
+    if(!position){commit();continue} // Never connect across another UI element.
+    if(!current.value){startStroke(position);continue}
+    if(current.value.points.length>=500){const last=current.value.points.at(-1);commit();startStroke({...position,point:last})}
+    current.value?.points.push(position.point)
+  }
 }
 function commit() {
   if (!current.value) return
-  emit('update:modelValue', cleanAnnotations([...props.modelValue,current.value])); current.value = null
+  localStrokes=cleanAnnotations([...localStrokes,current.value]);emit('update:modelValue',localStrokes);current.value=null
 }
-function up(event) { if (event.pointerId !== pointerId) return; commit(); surface.value.releasePointerCapture?.(pointerId); pointerId = null }
+function finish() {commit();if(pointerId!==null && surface.value?.hasPointerCapture?.(pointerId))surface.value.releasePointerCapture(pointerId);pointerId=null;lastErase=null}
+function up(event) {if(event.pointerId===pointerId)finish()}
 window.addEventListener('resize',queueMeasure)
 document.addEventListener('scroll',queueMeasure,true)
-onBeforeUnmount(() => { alive = false; commit(); observer?.disconnect(); mutationObserver?.disconnect(); window.removeEventListener('resize',queueMeasure); document.removeEventListener('scroll',queueMeasure,true); if (frame) cancelAnimationFrame(frame) })
+document.fonts?.ready.then(()=>{if(alive)queueMeasure()})
+onBeforeUnmount(() => { alive = false; finish(); observer?.disconnect(); mutationObserver?.disconnect(); window.removeEventListener('resize',queueMeasure); document.removeEventListener('scroll',queueMeasure,true); if (frame) cancelAnimationFrame(frame) })
 </script>
 <template>
-  <svg ref="surface" class="drawing-layer" :class="{ 'drawing-active': active, 'drawing-eraser': mode === 'erase' }" :viewBox="`0 0 ${geometry.width} ${geometry.height}`" preserveAspectRatio="none" aria-hidden="true" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up">
-    <polyline v-for="stroke in paths" :key="stroke.id" :data-stroke-id="stroke.id" :points="stroke.points" :stroke="stroke.color" :stroke-width="stroke.width" fill="none" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" :pointer-events="active && mode === 'erase' ? 'stroke' : 'none'" />
+  <svg ref="surface" class="drawing-layer" :class="{ 'drawing-active': active, 'drawing-eraser': mode === 'erase' }" :viewBox="`0 0 ${geometry.width} ${geometry.height}`" preserveAspectRatio="none" aria-hidden="true" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up" @lostpointercapture="up">
+    <polyline v-for="stroke in paths" :key="stroke.id" :data-stroke-id="stroke.id" :points="stroke.points" :stroke="stroke.color" :stroke-width="stroke.width" fill="none" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" pointer-events="none" />
   </svg>
 </template>

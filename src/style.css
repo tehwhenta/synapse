@@ -125,7 +125,7 @@ svg { flex-shrink: 0; }
 .material-icon { width: 36px; height: 39px; border-radius: 7px; background: #edf0e3; display: inline-flex; align-items: center; justify-content: center; color: #8a9271; flex-shrink: 0; }
 .kind-deck .material-icon { background: #efe8dc; color: #ac9775; }.kind-quiz .material-icon { background: #f1e5db; color: #b69c87; }
 .material-card h3 { font-family: Georgia, serif; font-weight: 400; font-size: 18px; letter-spacing: -.3px; line-height: 1.35; margin: 19px 0 10px; }
-.material-card p { font-size: 10px; line-height: 1.7; color: #a0a28f; margin-bottom: 20px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.material-card p { font-size: 10px; line-height: 1.7; color: #a0a28f; margin-bottom: 20px; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .card-bottom { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; font-size: 8px; color: #abad9e; border-top: 1px solid #f0f0e9; padding-top: 13px; }
 .card-bottom > span:last-child { display: flex; align-items: center; gap: 4px; color: #838d6b; }
 .card-delete { position: absolute; right: 4px; bottom: 40px; opacity: 0; }.material-card:hover .card-delete,.card-delete:focus-visible { opacity: 1; }
@@ -519,7 +519,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .editor-tools { position: sticky; top: 0; z-index: 60; background: var(--paper, #fafaf5); border-radius: 9px 9px 0 0; border-bottom: 1px solid var(--line); box-shadow: 0 5px 12px #343a3008; }
 .highlight-hint { padding: 7px 12px; color: #697447; font-size: 11px; line-height: 1.5; border-top: 1px solid var(--line); }
 .annotated-paper { isolation: isolate; }
-.drawing-layer { z-index: 20; overflow: visible; }
+.drawing-layer { z-index: 20; overflow: hidden; contain: paint; }
 .reviewer-paper > .markdown,.annotated-paper > .rich-editor-content { position: relative; z-index: 0; }
 .manual-deck-entry { display: flex; gap: 12px; align-items: center; margin: 16px 0 22px; flex-wrap: wrap; }
 .custom-card-row { border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-width: 0; }.custom-card-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 9px; font-size: 13px; }
@@ -605,3 +605,16 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .timing-recent li>div { display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px 12px; }
 .timing-recent strong { overflow-wrap:anywhere; font-size:.84rem; }
 .timing-recent p { margin:4px 0 0; }
+
+/* Reviewer overlays form their own clipped stacking context, below the sticky tools. */
+.annotated-paper { min-width:0; isolation:isolate; overflow:clip; }
+.rich-editor .tableWrapper { overflow-x:auto; overscroll-behavior-x:contain; }
+.rich-editor table { table-layout:fixed; border-collapse:collapse; overflow:visible; }
+.rich-editor th,.rich-editor td { position:relative; min-width:48px; box-sizing:border-box; }
+.rich-editor .column-resize-handle { position:absolute; top:0; bottom:0; right:-3px; width:6px; background:#8c9569; pointer-events:none; z-index:2; }
+.rich-editor .resize-cursor,.rich-editor .resize-cursor * { cursor:col-resize!important; }
+.rich-editor .row-resize-cursor,.rich-editor .row-resize-cursor * { cursor:row-resize!important; }
+.rich-editor tr.row-resize-hover > :is(td,th) { border-bottom:2px solid #8c9569; }
+.rich-editor .table-resizing { user-select:none; touch-action:none; }
+.reviewer-paper .tableWrapper { max-width:100%; overflow-x:auto; }
+.reviewer-paper .tableWrapper table { display:table; max-width:none; table-layout:fixed; }

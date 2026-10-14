@@ -48,7 +48,7 @@ export async function runDraftPipeline<T,R>(options: DraftPipeline<T,R>): Promis
     let raw: unknown
     try {
       if(retryKind && options.metrics)options.metrics.values[retryKind==='draft'?'draft_retries':'provider_retries']++
-      raw=await options.generate(revision,Math.min(60000,remaining))
+      raw=await options.generate(revision,Math.min(120000,remaining))
       const output=options.metrics?await options.metrics.time('validation_ms',()=>options.validate(raw)):options.validate(raw)
       try { return options.metrics?await options.metrics.time('save_ms',()=>options.save(output)):await options.save(output) }
       catch (error) { throw correctableSaveError(error) ?? error }

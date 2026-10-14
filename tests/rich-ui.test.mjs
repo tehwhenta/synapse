@@ -74,7 +74,7 @@ test('Highlights, text annotations, and freehand pen settings survive serializat
       const event=new dom.window.MouseEvent(type,{bubbles:true,cancelable:true,button:0,clientX:x,clientY:y});Object.defineProperty(event,'pointerId',{value:1});surface.dispatchEvent(event);await flushPromises()
     }
     const strokes=wrapper.emitted('update:annotations').at(-1)[0]
-    assert.equal(strokes.length,1);assert.equal(strokes[0].width,7);assert.equal(strokes[0].color,'#2563eb');assert.equal(strokes[0].anchor,p.dataset.annotationId)
+    assert.equal(strokes.length,1);assert.equal(strokes[0].width,7);assert.equal(strokes[0].color,'#2563eb');assert.equal(strokes[0].anchor,'synapse-paper-v1')
     const {annotatedHtml,cleanAnnotations}=await import('../src/lib/annotations.js')
     const output=annotatedHtml(wrapper.emitted('update:modelValue').at(-1)[0],strokes)
     assert.match(output,/svg class="saved-drawing"/);assert.match(output,/stroke="#2563eb"/)
@@ -341,4 +341,68 @@ test('Generation bars track saved sets and unsupported uploads show a clear erro
  assert.equal(bar.find('progress').attributes('value'),'100');bar.unmount()
  const single=mount(runtime.GenerationProgress,{props:{task:{status:'processing',kind:'deck',completed_kinds:[]}}})
  assert.equal(single.find('progress').attributes('value'),undefined,'An active AI request does not invent a completion percentage');single.unmount()
+})
+
+function pointer(target,type,x,y,id=1){
+ const event=new dom.window.MouseEvent(type,{bubbles:true,cancelable:true,button:0,buttons:1,clientX:x,clientY:y})
+ Object.defineProperty(event,'pointerId',{value:id});target.dispatchEvent(event)
+}
+test('One continuous drawing crosses paragraph gaps and table areas without escaping the paper; legacy anchors still render',async()=>{
+ const legacy={id:'old-stroke',anchor:'old-block',color:'#c2413a',width:3,points:[[0.1,0.2],[0.7,0.5]]}
+ const wrapper=mount(runtime.RichEditor,{props:{modelValue:'<p data-annotation-id="old-block">First</p><p>Second</p>',annotations:[legacy]},attachTo:document.body})
+ try{
+  await flushPromises();const host=wrapper.find('.annotated-paper').element
+  host.getBoundingClientRect=()=>({left:10,top:20,width:500,height:400})
+  const paragraphs=wrapper.findAll('.ProseMirror p');paragraphs[0].element.getBoundingClientRect=()=>({left:10,top:20,width:500,height:40});paragraphs[1].element.getBoundingClientRect=()=>({left:10,top:150,width:500,height:40})
+  await wrapper.find('[aria-label="Draw on reviewer"]').trigger('click')
+  const svg=wrapper.find('svg.drawing-layer').element
+  for(const [type,x,y]of [['pointerdown',50,40],['pointermove',80,110],['pointermove',140,180],['pointermove',200,300],['pointerup',200,300]]){pointer(svg,type,x,y);await flushPromises()}
+  const strokes=wrapper.emitted('update:annotations').at(-1)[0];assert.equal(strokes.length,2);assert.equal(strokes[1].anchor,'synapse-paper-v1');assert.ok(strokes[1].points.length>=5)
+  assert.deepEqual(strokes[0],legacy);assert.ok(wrapper.find('[data-stroke-id="old-stroke"]').exists())
+  pointer(svg,'pointerdown',70,70);pointer(svg,'pointermove',9999,9999);pointer(svg,'pointerup',9999,9999);await flushPromises()
+  const latest=wrapper.emitted('update:annotations').at(-1)[0];assert.ok(latest.every(s=>s.points.every(p=>p.every(n=>n>=0&&n<=1))))
+  const css=readFileSync(new URL('../src/style.css',import.meta.url),'utf8');assert.match(css,/\.drawing-layer \{ z-index: 20; overflow: hidden; contain: paint; \}/);assert.match(css,/\.annotated-paper \{ min-width:0; isolation:isolate; overflow:clip;/)
+ }finally{wrapper.unmount()}
+})
+test('The eraser works with highlights alone, removes marks without text loss, and dragging erases drawings too',async()=>{
+ const wrapper=mount(runtime.RichEditor,{props:{modelValue:'<p><mark data-highlight-color="#fef08a">Important</mark> plain <mark data-highlight-color="#fef08a">Second</mark></p>'},attachTo:document.body})
+ const prior=document.elementsFromPoint
+ try{
+  await flushPromises();const editor=wrapper.findComponent({name:'EditorContent'}).props('editor'),host=wrapper.find('.annotated-paper').element
+  host.getBoundingClientRect=()=>({left:0,top:0,width:500,height:100})
+  const button=wrapper.find('[aria-label="Erase drawings and highlights"]');assert.equal(button.attributes('disabled'),undefined);await button.trigger('click')
+  const svg=wrapper.find('svg.drawing-layer').element
+  document.elementsFromPoint=()=>[svg,...wrapper.findAll('.ProseMirror mark').slice(0,1).map(w=>w.element)]
+  const before=editor.getText();pointer(svg,'pointerdown',20,20);pointer(svg,'pointerup',20,20);await flushPromises()
+  assert.equal(wrapper.findAll('.ProseMirror mark').length,1);assert.equal(editor.getText(),before)
+  await wrapper.setProps({annotations:[{id:'erase-me',anchor:'synapse-paper-v1',color:'#c2413a',width:3,points:[[0.1,0.5],[0.8,0.5]]}]})
+  pointer(svg,'pointerdown',10,50);pointer(svg,'pointermove',100,50);pointer(svg,'pointerup',100,50);await flushPromises()
+  assert.deepEqual(wrapper.emitted('update:annotations').at(-1)[0],[]);assert.equal(wrapper.findAll('.ProseMirror mark').length,0);assert.equal(editor.getText(),before)
+  editor.commands.undo();await flushPromises();assert.ok(wrapper.findAll('.ProseMirror mark').length>0,'Highlight erasure participates in editor undo')
+ }finally{document.elementsFromPoint=prior;wrapper.unmount()}
+})
+test('Column and row border dragging persists safe sizes through save, read view, editor reopen, and undo',async()=>{
+ const wrapper=mount(runtime.RichEditor,{props:{modelValue:'<table><tbody><tr><th><p>Term</p></th><th><p>Meaning</p></th></tr><tr><td><p>FIFO</p></td><td><p>First in, first out</p></td></tr></tbody></table>'},attachTo:document.body})
+ let reopened
+ try{
+  await flushPromises();const editor=wrapper.findComponent({name:'EditorContent'}).props('editor'),cell=wrapper.find('th').element,row=cell.parentElement
+  cell.getBoundingClientRect=()=>({left:0,right:120,top:0,bottom:50,width:120,height:50});Object.defineProperty(cell,'offsetWidth',{value:120,configurable:true});row.getBoundingClientRect=()=>({left:0,right:300,top:0,bottom:50,width:300,height:50})
+  let cellPosition;editor.state.doc.descendants((node,pos)=>{if(cellPosition===undefined&&node.type.name==='tableHeader')cellPosition=pos})
+  const oldCoords=editor.view.posAtCoords;editor.view.posAtCoords=()=>({pos:cellPosition+2,inside:cellPosition})
+  cell.dispatchEvent(new dom.window.MouseEvent('mousemove',{bubbles:true,clientX:119,clientY:20}))
+  cell.dispatchEvent(new dom.window.MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0,clientX:119,clientY:20}))
+  window.dispatchEvent(new dom.window.MouseEvent('mouseup',{clientX:179,clientY:20}));await flushPromises();editor.view.posAtCoords=oldCoords
+  assert.match(editor.getHTML(),/colwidth="180"/)
+  const rowCell=wrapper.find('th').element;rowCell.getBoundingClientRect=()=>({left:0,right:180,top:0,bottom:50,width:180,height:50});rowCell.parentElement.getBoundingClientRect=()=>({left:0,right:300,top:0,bottom:50,width:300,height:50})
+  pointer(rowCell,'pointerdown',60,49);pointer(window,'pointermove',60,109);pointer(window,'pointerup',60,109);await flushPromises()
+  let saved=wrapper.emitted('update:modelValue').at(-1)[0]
+  assert.match(saved,/data-row-height="110"/);assert.match(saved,/colwidth="180"/)
+  const rendered=rich.renderStudyHtml(saved,'html');assert.match(rendered,/height: 110px/);assert.match(rendered,/width: 180px/)
+  reopened=mount(runtime.RichEditor,{props:{modelValue:saved},attachTo:document.body});await flushPromises()
+  assert.match(reopened.findComponent({name:'EditorContent'}).props('editor').getHTML(),/data-row-height="110"/)
+  assert.match(reopened.findComponent({name:'EditorContent'}).props('editor').getHTML(),/colwidth="180"/)
+  editor.commands.undo();await flushPromises();assert.doesNotMatch(editor.getHTML(),/data-row-height="110"/)
+  const safe=rich.cleanHtml('<table><tr data-row-height="-99" style="position:fixed"><td colwidth="5,url(evil)" style="width:99999px">Safe</td></tr></table>')
+  assert.doesNotMatch(safe,/position:|url\(|colwidth|row-height/)
+ }finally{reopened?.unmount();wrapper.unmount()}
 })

@@ -1,5 +1,6 @@
 import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { safeRowHeight, safeColumnWidths } from './tableDimensions.js'
 import { validAnchor, validColor } from './annotations.js'
 
 export function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]) }
@@ -15,6 +16,16 @@ DOMPurify.addHook('afterSanitizeAttributes', node => {
     else if (node.tagName === 'MARK' && validColor(node.getAttribute('data-highlight-color'))) node.setAttribute('style', `background-color: ${node.getAttribute('data-highlight-color')}`)
     else node.removeAttribute('style')
   }
+  if (node.hasAttribute('colwidth')) {
+    const widths=safeColumnWidths(node.getAttribute('colwidth'))
+    if(['TD','TH'].includes(node.tagName) && widths)node.setAttribute('colwidth',widths.join(','))
+    else node.removeAttribute('colwidth')
+  }
+  if (node.hasAttribute('data-row-height')) {
+    const height=safeRowHeight(node.getAttribute('data-row-height'))
+    if(node.tagName==='TR' && height){node.setAttribute('data-row-height',String(height));node.setAttribute('style',`height: ${height}px`)}
+    else node.removeAttribute('data-row-height')
+  }
   if (node.hasAttribute('data-annotation-id') && !validAnchor(node.getAttribute('data-annotation-id'))) node.removeAttribute('data-annotation-id')
   if (node.hasAttribute('data-highlight-color')) {
     if (node.tagName === 'MARK' && validColor(node.getAttribute('data-highlight-color'))) node.setAttribute('style', `background-color: ${node.getAttribute('data-highlight-color')}`)
@@ -26,7 +37,7 @@ DOMPurify.addHook('afterSanitizeAttributes', node => {
 export function cleanHtml(html) {
   return DOMPurify.sanitize(html || '', {
     ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','strong','b','em','i','u','s','del','ul','ol','li','blockquote','pre','code','hr','a','table','thead','tbody','tr','td','th','div','span','mark'],
-    ALLOWED_ATTR: ['href','rel','target','style','colspan','rowspan','start','data-type','data-latex','data-annotation-id','data-highlight-color','data-comment','title'],
+    ALLOWED_ATTR: ['href','rel','target','style','colspan','rowspan','colwidth','data-row-height','start','data-type','data-latex','data-annotation-id','data-highlight-color','data-comment','title'],
     ALLOW_DATA_ATTR: false,
   })
 }

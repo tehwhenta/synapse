@@ -31,7 +31,7 @@ before(async()=>{
     grant usage on schema auth,storage,realtime to anon,authenticated,service_role;
     grant select,insert,delete on storage.objects to authenticated; grant select,insert on realtime.messages to authenticated;
     create publication supabase_realtime;`)
-  for(const file of ['001_synapse.sql','003_study_refinements.sql','004_reviewer_accounts.sql','006_system_maintenance.sql','007_admin_email_type.sql','008_guided_generation.sql','009_seeds_and_custom_cards.sql','010_automatic_study.sql','011_generation_reliability.sql','012_generation_queue.sql','014_safe_database_cleanup.sql','015_generation_refinement.sql','017_generation_performance.sql']) await db.exec(readFileSync(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'))
+  for(const file of ['001_synapse.sql','003_study_refinements.sql','004_reviewer_accounts.sql','006_system_maintenance.sql','007_admin_email_type.sql','008_guided_generation.sql','009_seeds_and_custom_cards.sql','010_automatic_study.sql','011_generation_reliability.sql','012_generation_queue.sql','014_safe_database_cleanup.sql','015_generation_refinement.sql','017_generation_performance.sql','018_streaming_generation.sql']) await db.exec(readFileSync(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'))
   for(const [i,id] of ids.entries()) await db.query('insert into auth.users(id,email,email_confirmed_at,last_sign_in_at) values($1,$2,now(),now())',[id,`guided${i}@example.com`])
 })
 beforeEach(async()=>{await db.exec("delete from private.generation_queue;delete from private.generation_runs;update private.material_jobs set status='failed' where status='processing';update private.generation_capacity set cooldown_until=null")})
@@ -180,7 +180,9 @@ test('Three overlapping worker requests complete two uploads for one user and on
   try{
    if(firstCalls<=3){if(firstCalls===3)release();await Promise.race([ready,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Parallel request admission stalled')),1500))])}
    const output=payload.generationConfig.responseMimeType==='text/plain'?`# Source ${index}\nFIFO keeps earlier arrivals first. Enqueue inserts at the rear and dequeue removes the front.`:prompt.includes('"flashcards"')?{flashcards:[{front:`What preserves the arrival order in Source_${index}?`,back:'Rear insertion and front removal preserve FIFO.',coverage_key:'queue:explain_fifo'}]}:{quiz:[{type:'short_answer',question:`Name the front removal operation in Source_${index}.`,answer:'Dequeue',options:[],accepted_answers:[],explanation:'Dequeue removes the oldest item from the front.',coverage_key:'queue:identify_dequeue'}]}
-   return Response.json({usageMetadata:{promptTokenCount:100,candidatesTokenCount:60,thoughtsTokenCount:0},candidates:[{finishReason:'STOP',content:{parts:[{text:typeof output==='string'?output:JSON.stringify(output)}]}}]})
+   const body=typeof output==='string'?output:JSON.stringify(output),middle=Math.floor(body.length/2)
+   const events=[{candidates:[{content:{parts:[{text:body.slice(0,middle)}]}}]},{usageMetadata:{promptTokenCount:100,candidatesTokenCount:60,thoughtsTokenCount:0},candidates:[{finishReason:'STOP',content:{parts:[{text:body.slice(middle)}]}}]}]
+   return new Response(events.map(event=>'data: '+JSON.stringify(event)+'\n\n').join(''),{headers:{'content-type':'text/event-stream'}})
   }finally{active--}
  }
  try{
@@ -199,3 +201,22 @@ test('Three overlapping worker requests complete two uploads for one user and on
 
 
 
+
+test('Streaming status is lease fenced, throttled, private and resets on the next stage',async()=>{
+ const m=await material(),q=await rpc('enqueue_generation',[ids[0],crypto.randomUUID(),m.doc,null,null]),task=await rpc('claim_generation_task',[])
+ assert.equal(await rpc('record_generation_progress',[q.id,task.lease_token,1,40]),false,'Unstarted deliveries cannot report')
+ await rpc('start_generation_task',[q.id,task.lease_token])
+ assert.equal(await rpc('record_generation_progress',[q.id,task.lease_token,1,40]),true)
+ assert.equal(await rpc('record_generation_progress',[q.id,task.lease_token,1,80]),false,'Database also limits write frequency')
+ await db.query("update private.generation_queue set stream_updated_at=clock_timestamp()-interval '8 seconds' where id=$1",[q.id])
+ assert.equal(await rpc('record_generation_progress',[q.id,task.lease_token,1,80]),true)
+ assert.equal(await rpc('record_generation_progress',[q.id,crypto.randomUUID(),2,90]),false)
+ await assert.rejects(user(0,'select public.record_generation_progress($1,$2,1,90)',[q.id,task.lease_token]),/permission denied/)
+ const mine=(await user(0,'select public.my_generation_tasks() as v')).rows[0].v
+ assert.equal(mine[0].stream_chars,80)
+ assert.ok(!JSON.stringify(mine).includes(task.lease_token));assert.ok(!JSON.stringify(mine).includes('FIFO'))
+ assert.deepEqual((await user(1,'select public.my_generation_tasks($1) as v',[m.folder.id])).rows[0].v,[])
+ await rpc('defer_generation_task',[q.id,task.lease_token,'Mock transient interruption',5,'Continuing',false])
+ const reset=(await user(0,'select public.my_generation_tasks() as v')).rows[0].v[0]
+ assert.equal(reset.stream_chars,0);assert.equal(reset.stream_updated_at,null)
+})
