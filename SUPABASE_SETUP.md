@@ -1,6 +1,6 @@
-# Current update: Synapse 1.9.0
+# Current update: Synapse 1.9.1
 
-Follow [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md) for streamed generation, immediate background-worker acknowledgement, bounded drawings, highlight erasing and draggable table dimensions. If 1.8.2 works, run 018, redeploy generate-study, then deploy the matching frontend.
+Follow [NOTE_SAVE_FIX.md](NOTE_SAVE_FIX.md) to fix rich-note saving and enable blank-note window resizing. Run SQL 019 before deploying the matching frontend. The generation pipeline remains the 1.9.0 version described in [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md).
 
 # Synapse: exact Supabase setup
 
@@ -27,7 +27,7 @@ Complete these steps once for your new project. Use the Dashboard route below; t
 5. Confirm the query succeeds before proceeding.
 6. Open another new query, paste the entire contents of `supabase/migrations/003_study_refinements.sql`, and click **Run** once. This adds the current saved-set, photo, and space-deletion features.
 7. In another new query, run `supabase/migrations/004_reviewer_accounts.sql` once. It adds reviewer drawings and the 48-hour account deletion lifecycle. Then run `006_system_maintenance.sql` once. After the cleanup job's original Vault setup below, use `005_cleanup_interval.sql` to update it to every ten minutes. Follow `ADMIN_AND_READINESS.md` to create the admin function and bind the confirmed admin account.
-8. Run `007_admin_email_type.sql`, `008_guided_generation.sql`, `009_seeds_and_custom_cards.sql`, `010_automatic_study.sql`, and `011_generation_reliability.sql` in that order, each as a separate complete query, before deploying the generation function. The latest workflow automatically generates all three study formats without Seeds/topic choices and revises invalid drafts within the same click. Study files retain the 20 MB cap. Then run `012_generation_queue.sql`, `014_safe_database_cleanup.sql`, `015_generation_refinement.sql`, `017_generation_performance.sql`, and `018_streaming_generation.sql`. After the functions and Vault secrets below are configured, run `013_generation_schedule.sql`, then `016_faster_generation_schedule.sql` last; the new queue needs these schedules. Follow `GENERATION_PERFORMANCE_SETUP.md` for exact deployment order.
+8. Run `007_admin_email_type.sql`, `008_guided_generation.sql`, `009_seeds_and_custom_cards.sql`, `010_automatic_study.sql`, and `011_generation_reliability.sql` in that order, each as a separate complete query, before deploying the generation function. The latest workflow automatically generates all three study formats without Seeds/topic choices and revises invalid drafts within the same click. Study files retain the 20 MB cap. Then run `012_generation_queue.sql`, `014_safe_database_cleanup.sql`, `015_generation_refinement.sql`, `017_generation_performance.sql`, `018_streaming_generation.sql`, and `019_rich_note_capacity.sql`. After the functions and Vault secrets below are configured, run `013_generation_schedule.sql`, then `016_faster_generation_schedule.sql` last; the new queue needs these schedules. Follow `GENERATION_PERFORMANCE_SETUP.md` for exact deployment order.
 
 Run it once in a new project. It uses a transaction: a failed run rolls back the whole script. If it succeeded, do not run it again. It does not wipe existing tables to make re-runs appear successful.
 

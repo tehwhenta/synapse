@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { cleanAnnotations } from '../lib/annotations'
+import { validateNoteContent, noteSaveError } from '../lib/noteContent'
 import { invitationUrl, invitationToken } from '../lib/appUrl'
 import { ref, computed } from 'vue'
 import { supabase } from '../lib/supabase'
@@ -129,14 +130,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
   async function saveNote(title, content, id, contentFormat = 'markdown', annotations) {
     if (!canEdit.value) throw new Error('Editor access required.')
+    validateNoteContent(content,contentFormat)
     const drawingFields = annotations === undefined ? {} : { annotations:cleanAnnotations(annotations) }
     if (auth.demo) {
       if (id) Object.assign(assets.value.find(a => a.id === id), { title, content, content_format: contentFormat, ...drawingFields })
       else { const newId = crypto.randomUUID(); assets.value.unshift({ id: newId, series_id: newId, set_number: 1, folder_id: selectedFolderId.value, kind: 'note', title, content, content_format: contentFormat, data: [], ...drawingFields, created_by: auth.user.id, created_at: new Date().toISOString() }) }
       persistDemo()
     } else {
-      if (id) check(await supabase.from('study_assets').update({ title, content, content_format: contentFormat,...drawingFields }).eq('id', id))
-      else check(await supabase.from('study_assets').insert({ folder_id: selectedFolderId.value, kind: 'note', title, content, content_format: contentFormat, created_by: auth.user.id,...drawingFields }))
+      try {
+        if (id) check(await supabase.from('study_assets').update({ title, content, content_format: contentFormat,...drawingFields }).eq('id', id))
+        else check(await supabase.from('study_assets').insert({ folder_id: selectedFolderId.value, kind: 'note', title, content, content_format: contentFormat, created_by: auth.user.id,...drawingFields }))
+      } catch(error) { throw noteSaveError(error) }
       await loadFolder()
     }
   }

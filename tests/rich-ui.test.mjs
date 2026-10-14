@@ -406,3 +406,24 @@ test('Column and row border dragging persists safe sizes through save, read view
   assert.doesNotMatch(safe,/position:|url\(|colwidth|row-height/)
  }finally{reopened?.unmount();wrapper.unmount()}
 })
+
+test('Blank-note dialog maximizes and resizes, and a failed save retains the title and full draft',async()=>{
+ runtime.setActivePinia(runtime.createPinia())
+ const wrapper=mount(runtime.App,{global:{stubs:{Teleport:true,StudyRoom:true,StudyViewer:true,AdminPanel:true,FocusTimer:true,Avatar:true,AsyncComponentWrapper:{name:'RichEditorFixture',props:['modelValue'],emits:['update:modelValue'],template:'<textarea aria-label="Note draft" :value="modelValue" @input="$emit(\'update:modelValue\',$event.target.value)" />'}}},attachTo:document.body})
+ try{
+  await flushPromises();await flushPromises()
+  await wrapper.find('.blank-note-card').trigger('click');await flushPromises()
+  assert.equal(wrapper.findAll('.resize-edge').length,8)
+  await wrapper.find('[aria-label="Maximize window"]').trigger('click')
+  assert.ok(wrapper.find('.modal-frame').classes().includes('modal-maximized'))
+  await wrapper.find('[aria-label="Restore window"]').trigger('click')
+  assert.equal(wrapper.findAll('.resize-edge').length,8)
+  await wrapper.find('.modal input').setValue('My long chapter')
+  const draft='<p>'+('A complete idea. '.repeat(16000))+'</p>'
+  await wrapper.find('.modal [aria-label="Note draft"]').setValue(draft)
+  await wrapper.find('.modal form').trigger('submit');await flushPromises()
+  assert.match(wrapper.find('.error-box').text(),/too long.*draft is still open/)
+  assert.equal(wrapper.find('.modal input').element.value,'My long chapter')
+  assert.equal(wrapper.find('.modal [aria-label="Note draft"]').element.value,draft)
+ }finally{wrapper.unmount();await flushPromises()}
+})

@@ -1,6 +1,6 @@
-# Current update: Synapse 1.9.0
+# Current update: Synapse 1.9.1
 
-Follow [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md) for streamed generation, immediate background-worker acknowledgement, bounded drawings, highlight erasing and draggable table dimensions. If 1.8.2 works, run 018, redeploy generate-study, then deploy the matching frontend.
+Follow [NOTE_SAVE_FIX.md](NOTE_SAVE_FIX.md) to fix rich-note saving and enable blank-note window resizing. Run SQL 019 before deploying the matching frontend. The generation pipeline remains the 1.9.0 version described in [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md).
 
 # Synapse
 

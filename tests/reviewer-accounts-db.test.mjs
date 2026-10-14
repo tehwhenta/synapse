@@ -87,3 +87,20 @@ test('Expired requests require a valid worker lease and storage cleanup before r
   assert.equal((await db.query('select * from public.study_assets where id=$1',[note.id])).rows.length,1)
   assert.equal((await db.query('select * from auth.users where id=$1',[ids[1]])).rows.length,1)
 })
+
+test('Rich-note capacity upgrade accepts complete formatted notes without relaxing Markdown limits or permissions',async()=>{
+ const html='<p>'+('Detailed notes. '.repeat(5000))+'</p>'
+ assert.ok(html.length>60000)
+ const insert='insert into public.study_assets(folder_id,kind,title,content,content_format,created_by) values($1,\'note\',\'Long notes\',$2,$3,$4) returning id,content'
+ await assert.rejects(user(0,insert,[shared.id,html,'html',ids[0]]),/study_assets_content_check/)
+ await db.exec(readFileSync(new URL('../supabase/migrations/019_rich_note_capacity.sql',import.meta.url),'utf8'))
+ const row=(await user(0,insert,[shared.id,html,'html',ids[0]])).rows[0]
+ assert.equal(row.content,html)
+ const edge='<p>'+('🙂'.repeat(239993))+'</p>'
+ assert.equal([...edge].length,240000)
+ await user(0,'update public.study_assets set content=$1 where id=$2',[edge,row.id])
+ await assert.rejects(user(0,'update public.study_assets set content=$1 where id=$2',[edge+'x',row.id]),/study_assets_content_check/)
+ await assert.rejects(user(0,insert,[shared.id,'x'.repeat(60001),'markdown',ids[0]]),/study_assets_content_check/)
+ await assert.rejects(user(2,insert,[shared.id,html,'html',ids[2]]),/row-level security/)
+ assert.equal((await db.query("select relrowsecurity from pg_class where oid='public.study_assets'::regclass")).rows[0].relrowsecurity,true)
+})

@@ -1,3 +1,5 @@
+> Note-saving fix: after the generation steps below, apply [NOTE_SAVE_FIX.md](NOTE_SAVE_FIX.md) for SQL 019 and the 1.9.1 frontend. No additional function deployment is needed for that fix.
+
 # Synapse 1.9.0 — generation and reviewer editor update
 
 Use this update after Synapse 1.8.2. It preserves saved study sets, source text, custom flashcards and account data. No dependency or secret changes are required.
