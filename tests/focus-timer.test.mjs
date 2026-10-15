@@ -94,3 +94,15 @@ test('Running sessions ignore wheel changes and customization cannot inflate log
     assert.equal(wrapper.find('.timer-display').text(), '26:00')
   } finally { wrapper.unmount(); Date.now = originalNow }
 })
+
+
+test('Mobile minute controls render a real minus icon and the rail title is Focus',async()=>{
+ const {wrapper}=setup()
+ try{
+  assert.equal(wrapper.find('.rail-title > span').text(),'Focus')
+  const subtract=wrapper.find('[aria-label="Subtract one focus minute"]')
+  assert.ok(subtract.find('svg.lucide-minus-icon').exists(),'Do not fall back to a file icon')
+  assert.ok(wrapper.find('[aria-label="Add one focus minute"] svg.lucide-plus-icon').exists())
+  await subtract.trigger('click');assert.equal(wrapper.find('.timer-display').text(),'24:00')
+ }finally{wrapper.unmount()}
+})

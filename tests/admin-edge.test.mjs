@@ -10,7 +10,7 @@ test('Admin HTTP cleanup requires a verified session and server role; CORS, leas
   globalThis.Deno={env:{get:key=>({ALLOWED_ORIGINS:'https://rcgsynapse.vercel.app',SUPABASE_URL:'https://mock.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'mock-server-only'})[key]},serve:fn=>{handler=fn}}
   globalThis.__maintenanceClient=()=>({
     auth:{getUser:async token=>token==='invalid'?{data:null,error:new Error('Invalid JWT')}:{data:{user:{id:token==='admin-session'?adminId:'ordinary-user'}}}},
-    async rpc(name,args){calls.push([name,args]);if(name==='is_app_admin_user')return {data:args.p_user_id===adminId};if(name==='begin_maintenance_run')return {data:busy?null:'lease'};if(name==='pending_storage_deletions'||name==='claim_due_account_deletions')return {data:[]};if(name==='prune_maintenance_records')return {data:{expired_invitations:0}};return {data:null}},
+    async rpc(name,args){calls.push([name,args]);if(name==='is_app_admin_user')return {data:args.p_user_id===adminId};if(name==='begin_maintenance_run')return {data:busy?null:'lease'};if(name==='expired_storage_files')return queryFailure?{error:new Error('Database unavailable')}:{data:[]};if(name==='pending_storage_deletions'||name==='claim_due_account_deletions')return {data:[]};if(name==='prune_maintenance_records')return {data:{expired_invitations:0}};return {data:null}},
     from(){return {select(){return this},lt(){return this},is(){return this},order(){return this},limit:async()=>queryFailure?{error:new Error('Database unavailable')}:{data:[]},update(){return this},eq(){return this},then(resolve){return Promise.resolve({error:null}).then(resolve)}}},
   })
   try {

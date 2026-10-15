@@ -55,7 +55,7 @@ async function cleanup() {
       throw new Error(message)
     }
     const data = result.data
-    emit('notify', `Cleanup complete: ${data.purged || 0} expired files and ${data.accounts_deleted || 0} due accounts removed.${data.more_possible ? ' More work will continue on the scheduled run.' : ''}`)
+    emit('notify', `Cleanup complete: ${data.purged || 0} expired files, ${data.orphaned || 0} unused files and ${data.accounts_deleted || 0} due accounts removed.${data.more_possible ? ' More work will continue on the scheduled run.' : ''}`)
   } catch (err) { error.value = err.message }
   finally { busy.value = false; const actionError = error.value; await load(); if (actionError) error.value = actionError }
 }

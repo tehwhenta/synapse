@@ -13,6 +13,7 @@ test('Public generation verifies identity, accepts only queue admission, and rej
   if(name==='account_is_active')return {data:active}
   if(name==='generation_queue_ready')return {data:ready}
   if(name==='enqueue_generation'){assert.equal(args.p_user_id,userId);return allowed?{data:{id:crypto.randomUUID(),status:'queued'}}:{error:{message:'Editor access required'}}}
+  if(name==='enqueue_study_tool'){assert.equal(args.p_user_id,userId);return allowed?{data:{task:{id:crypto.randomUUID(),tool:args.p_tool,status:'queued'}}}:{error:{message:'Editor access required'}}}
   if(name==='start_generation_task')return pendingStart?await pendingStart:{data:null}
   return {data:0}
  }})
@@ -29,6 +30,13 @@ test('Public generation verifies identity, accepts only queue admission, and rej
   allowed=false;assert.equal((await handler(request())).status,403);allowed=true
   const ok=await handler(request({action:'enqueue',request_id:requestId,document_id:doc,user_id:crypto.randomUUID()}));assert.equal(ok.status,202);assert.equal((await ok.json()).task.status,'queued')
   assert.equal((await handler(request({action:'generate',document_id:doc,kind:'quiz'}))).status,409,'Old synchronous route cannot bypass queue capacity')
+  const toolBody={action:'study-tool',request_id:crypto.randomUUID(),asset_id:crypto.randomUUID(),tool:'highlights',highlights:['FIFO'],user_id:crypto.randomUUID()}
+  const tool=await handler(request(toolBody));assert.equal(tool.status,202);assert.equal((await tool.json()).task.tool,'highlights')
+  assert.equal((await handler(request({...toolBody,highlights:['']}))).status,400)
+  assert.equal((await handler(request({...toolBody,tool:'connections'}))).status,400)
+  assert.equal((await handler(request({...toolBody,tool:'other'}))).status,400)
+  allowed=false;assert.equal((await handler(request(toolBody))).status,403);allowed=true
+
   assert.equal((await handler(request({task_id:crypto.randomUUID(),lease_token:crypto.randomUUID()},'invalid',{'x-cron-secret':env.CRON_SECRET}))).status,200)
   assert.equal(calls.filter(([name])=>name==='enqueue_generation').length,2)
   let release,background

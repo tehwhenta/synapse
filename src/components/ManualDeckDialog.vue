@@ -11,7 +11,6 @@ async function save() { busy.value=true;error.value='';try { emit('created',awai
 <template>
   <Modal title="Flashcards, in your own words" wide @close="!busy&&emit('close')">
     <form class="stack-form manual-deck-form" @submit.prevent="save">
-      <p class="muted">Write your own questions and answers. Custom decks don’t use any AI attempts.</p>
       <p v-if="error" class="error-box" role="alert">{{ error }}</p>
       <label>Deck title<input v-model="title" required maxlength="150" placeholder="e.g. Biology · terms to remember" :disabled="busy" /></label>
       <section v-for="(card,index) in cards" :key="card.id" class="custom-card-row"><div class="custom-card-heading"><strong>Card {{ index+1 }}</strong><button type="button" class="icon-button" :disabled="busy||cards.length===1" :aria-label="'Remove card '+(index+1)" @click="cards.splice(index,1)"><Icon name="Trash2" :size="16" /></button></div><div class="custom-card-fields"><label>Question<textarea v-model="card.front" required maxlength="1000" rows="3" :disabled="busy" :aria-label="'Question '+(index+1)" placeholder="What would you like to remember?"></textarea></label><label>Answer<textarea v-model="card.back" required maxlength="2000" rows="3" :disabled="busy" :aria-label="'Answer '+(index+1)" placeholder="Write a clear answer…"></textarea></label></div></section>

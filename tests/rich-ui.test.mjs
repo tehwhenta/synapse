@@ -10,14 +10,14 @@ const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', 
 let rich, mount, flushPromises, runtime
 const runtimePath = fileURLToPath(new URL('./.rich-ui-runtime.mjs',import.meta.url))
 before(async () => {
-  for (const key of ['window','document','HTMLElement','Element','SVGElement','Node','DOMParser','MutationObserver','File','Blob','FileReader','localStorage','sessionStorage','location','history','getComputedStyle']) globalThis[key] = dom.window[key]
+  for (const key of ['window','document','Document','ShadowRoot','HTMLElement','Element','SVGElement','Node','DOMParser','MutationObserver','File','Blob','FileReader','localStorage','sessionStorage','location','history','getComputedStyle']) globalThis[key] = dom.window[key]
   globalThis.requestAnimationFrame = callback => setTimeout(callback,0)
   globalThis.cancelAnimationFrame = clearTimeout
   dom.window.Range.prototype.getClientRects = () => []
   dom.window.Range.prototype.getBoundingClientRect = () => ({left:0,right:0,top:0,bottom:0,width:0,height:0})
   rich = { ...await import('../src/lib/richText.js'), ...await import('../src/lib/studyRendering.js') }
   const utils = await import('@vue/test-utils'); mount = utils.mount; flushPromises = utils.flushPromises
-  const compiled = await build({ stdin:{ contents:"export {default as App} from './src/App.vue'; export {default as SpaceList} from './src/components/SpaceList.vue'; export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {default as GenerationProgress} from './src/components/GenerationProgress.vue'; export {default as GenerationPerformance} from './src/components/GenerationPerformance.vue'; export {default as ManualDeckDialog} from './src/components/ManualDeckDialog.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
+  const compiled = await build({ stdin:{ contents:"export {default as MistakeNotebook} from './src/components/MistakeNotebook.vue'; export {default as HighlightCards} from './src/components/HighlightCards.vue'; export {default as ConceptConnections} from './src/components/ConceptConnections.vue'; export {useLearningStore} from './src/stores/learning.js'; export {default as App} from './src/App.vue'; export {default as SpaceList} from './src/components/SpaceList.vue'; export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {default as GenerationProgress} from './src/components/GenerationProgress.vue'; export {default as GenerationPerformance} from './src/components/GenerationPerformance.vue'; export {default as ManualDeckDialog} from './src/components/ManualDeckDialog.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
     {name:'vue-test',setup(builder){builder.onLoad({filter:/\.vue$/},args=>{const {descriptor}=parse(readFileSync(args.path,'utf8'));return {contents:compileScript(descriptor,{id:args.path,inlineTemplate:true}).content,loader:'js',resolveDir:dirname(args.path)}})}}
   ] })
   // Download-style asset glob is a build-time feature, irrelevant to these DOM interaction tests.
@@ -154,11 +154,14 @@ test('Study viewer navigates retained sets, edits titles, and refreshes directly
   const first = workspace.assets.find(a=>a.id==='deck-trees');let refreshed=null
   workspace.refreshAsset=async asset=>{refreshed=asset.id;return asset.id}
   const wrapper = mount(runtime.StudyViewer,{props:{asset:first},global:{stubs:{Teleport:true}},attachTo:document.body})
+  try {
   await flushPromises(); assert.equal(wrapper.findAll('.set-numbers button').length,2)
   assert.equal(wrapper.find('.set-numbers .active').text(),'1')
   await wrapper.find('[aria-label="Open set 2"]').trigger('click'); await flushPromises()
   assert.equal(wrapper.find('.set-numbers .active').text(),'2')
   assert.match(wrapper.find('.flashcard-text').text(),/leaf node/)
+  assert.ok(wrapper.findAll('button').find(b=>b.text()==='Rename').find('svg.lucide-text-cursor-input-icon').exists())
+  assert.doesNotMatch(wrapper.text(),/Teach-back/i)
   await wrapper.findAll('button').find(b=>b.text()==='Rename').trigger('click')
   await wrapper.find('.rename-form input').setValue('My own practice title')
   await wrapper.find('.rename-form').trigger('submit'); await flushPromises()
@@ -170,13 +173,14 @@ test('Study viewer navigates retained sets, edits titles, and refreshes directly
   assert.equal(wrapper.findAll('.set-numbers button').length,2); assert.equal(wrapper.find('.set-numbers .active').text(),'2')
   await wrapper.find('[aria-label="Open set 1"]').trigger('click'); await flushPromises()
   assert.match(wrapper.find('.flashcard-text').text(),/makes a graph a tree/)
-  wrapper.unmount(); await workspace.dispose()
+  }finally{wrapper.unmount(); await workspace.dispose()}
 })
 test('Profile name and photo persist in sample mode; invalid formats and oversized photos are rejected',async () => {
   runtime.setActivePinia(runtime.createPinia()); const auth=runtime.useAuthStore(); await auth.initialize()
   await assert.rejects(auth.updateProfile('Student',new File(['x'],'bad.svg',{type:'image/svg+xml'})),/Choose a JPG/)
-  await assert.rejects(auth.updateProfile('Student',new File([new Uint8Array(2097153)],'large.jpg',{type:'image/jpeg'})),/2 MB/)
-  await auth.updateProfile('Ralph',new File(['photo bytes'],'avatar.png',{type:'image/png'}))
+  await assert.rejects(auth.updateProfile('Student',new File([new Uint8Array(10485761)],'large.jpg',{type:'image/jpeg'})),/10 MB/)
+  const photo=new File(['photo bytes'],'avatar.png',{type:'image/png'});Object.defineProperty(photo,'size',{value:10485760})
+  await auth.updateProfile('Ralph',photo)
   assert.equal(auth.profile.display_name,'Ralph'); assert.match(auth.profile.avatar_path,/^data:image\/png;base64,/)
   auth.enterDemo(); assert.equal(auth.profile.display_name,'Ralph')
   await auth.updateProfile('Ralph',null,true); assert.equal(auth.profile.avatar_path,null)
@@ -426,4 +430,51 @@ test('Blank-note dialog maximizes and resizes, and a failed save retains the tit
   assert.equal(wrapper.find('.modal input').element.value,'My long chapter')
   assert.equal(wrapper.find('.modal [aria-label="Note draft"]').element.value,draft)
  }finally{wrapper.unmount();await flushPromises()}
+})
+
+test('Highlights show prepared recall questions, allow editing, and save to custom decks',async()=>{
+ runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
+ const asset={...workspace.assets.find(a=>a.kind==='note'),content_format:'html',content:'<h2>Queues</h2><p><mark>FIFO means first in first out.</mark></p>'}
+ const wrapper=mount(runtime.HighlightCards,{props:{asset},attachTo:document.body})
+ try{
+  await flushPromises()
+  assert.equal(wrapper.find('[aria-label="Highlight question 1"]').element.value,'What does FIFO mean?')
+  assert.equal(wrapper.find('[aria-label="Highlight answer 1"]').element.value,'First in, first out.')
+  assert.match(wrapper.find('.tool-evidence').text(),/FIFO means first in first out/)
+  assert.equal(wrapper.find('.pill').text(),'Sample','Disconnected preview is explicitly labeled')
+  await wrapper.find('[aria-label="Highlight question 1"]').setValue('Explain FIFO ordering.')
+  await wrapper.find('form').trigger('submit');await flushPromises()
+  const deck=wrapper.emitted('saved')[0][0];assert.equal(deck.is_custom,true);assert.equal(deck.data[0].front,'Explain FIFO ordering.')
+ }finally{wrapper.unmount();await workspace.dispose()}
+})
+test('Concept map shows specific directed relationships, explanations and source evidence',async()=>{
+ runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
+ const asset=workspace.assets.find(a=>a.id==='note-trees')
+ const wrapper=mount(runtime.ConceptConnections,{props:{asset}})
+ try{
+  await flushPromises()
+  await wrapper.findAll('.concept-index button').find(b=>b.text()==='Tree').trigger('click')
+  assert.equal(wrapper.find('.concept-detail h4').text(),'Tree')
+  assert.match(wrapper.find('.concept-links').text(),/is a type of/)
+  await wrapper.findAll('.concept-links button').find(b=>b.text().includes('is a type of')).trigger('click')
+  assert.match(wrapper.find('.concept-explanation').text(),/connectivity and no cycles/)
+  assert.match(wrapper.find('.concept-explanation .tool-evidence').text(),/connected graph without cycles/)
+  assert.ok(wrapper.find('line[marker-end]').exists())
+  await wrapper.find('input').setValue('Binary search');assert.equal(wrapper.findAll('.concept-index button').length,1)
+ }finally{wrapper.unmount();await workspace.dispose()}
+})
+test('Mistake notebook records wrong answers, supports recall and mastery, and clears private state on sign-out',async()=>{
+ runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
+ const quiz=workspace.assets.find(a=>a.kind==='quiz')
+ await workspace.submitQuiz(quiz,quiz.data.map(()=> 'Wrong'))
+ const learning=runtime.useLearningStore(),wrapper=mount(runtime.MistakeNotebook,{attachTo:document.body})
+ try{
+  await flushPromises();assert.equal(wrapper.findAll('.mistake-entry').length,quiz.data.length)
+  await wrapper.find('.mistake-question').trigger('click')
+  await wrapper.find('[aria-label="Recall the answer"]').setValue(learning.mistakes[0].answer)
+  await wrapper.find('[aria-label="Check recalled answer"]').trigger('click');assert.ok(wrapper.find('.quiz-feedback').classes().includes('is-correct'))
+  await wrapper.find('[aria-label="Mark as understood"]').trigger('click');await flushPromises();assert.equal(wrapper.findAll('.mistake-entry').length,quiz.data.length-1)
+  await wrapper.find('[aria-label="Show mastered mistakes"]').trigger('click');await flushPromises();assert.equal(wrapper.findAll('.mistake-entry').length,1)
+  auth.user=null;assert.equal(learning.mistakes.length,0)
+ }finally{wrapper.unmount();await workspace.dispose()}
 })

@@ -1,3 +1,5 @@
+> Current release: **2.0.1**. After this note-saving fix, use [LEARNING_TOOLS_SETUP.md](LEARNING_TOOLS_SETUP.md) for SQL 020 → 021 and the AI study tools.
+
 # Synapse 1.9.1 — note saving and window resizing
 
 The screenshot shows `study_assets_content_check`. The original database limits stored note content to 60,000 characters. Rich text also contains HTML for formatting and tables, so it can reach that limit before the visible text looks particularly long.

@@ -3,6 +3,8 @@ dist/
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
 .sites/
 supabase/.temp/
 supabase/.branches/

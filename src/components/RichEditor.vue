@@ -12,7 +12,7 @@ import DrawingLayer from './DrawingLayer.vue'
 import { Highlight, Comment, AnnotationAnchors } from '../lib/editorAnnotations'
 import { cleanAnnotations } from '../lib/annotations'
 const props = defineProps({ modelValue: { type: String, default: '' }, format: { type: String, default: 'html' }, annotations: { type: Array, default: () => [] } })
-const emit = defineEmits(['update:modelValue','update:annotations'])
+const emit = defineEmits(['update:modelValue','update:annotations','flashcard'])
 const paper = ref(null), drawingMode = ref('text'), penColor = ref('#c2413a'), penWidth = ref(3), highlightColor = ref('#fef08a'), drawingError = ref('')
 const commentOpen = ref(false), commentText = ref('')
 const highlightEnabled = ref(false)
@@ -44,6 +44,7 @@ function applyHighlight() {
 }
 function toggleHighlight() { highlightEnabled.value = !highlightEnabled.value; if (highlightEnabled.value) { editor.value.commands.focus(); applyHighlight() }; clearTimeout(highlightTimer) }
 function changeHighlight() { if (highlightEnabled.value) applyHighlight() }
+function fromHighlight(){const current=editor.value;const {from,to}=current.state.selection;if(from<to)emit('flashcard',current.state.doc.textBetween(from,to,' ').trim())}
 function openComment() { commentText.value = editor.value.getAttributes('comment').text || ''; commentOpen.value = true }
 function saveComment() { editor.value.chain().focus().setMark('comment',{text:commentText.value.trim()}).run(); commentOpen.value = false }
 function setDrawingMode(mode) {
@@ -87,6 +88,7 @@ onBeforeUnmount(() => { clearTimeout(highlightTimer); editor.value?.destroy() })
       <button type="button" title="Strikethrough" aria-label="Strikethrough" :aria-pressed="editor.isActive('strike')" @mousedown.prevent @click="command('toggleStrike')"><s>S</s></button>
       <button type="button" :title="highlightEnabled ? 'Stop continuous highlighting (Escape)' : 'Turn on continuous highlighting'" aria-label="Highlight selected text" :disabled="drawingMode !== 'text'" :aria-pressed="highlightEnabled" @mousedown.prevent @click="toggleHighlight"><Icon name="Highlighter" :size="17" /></button>
       <label class="toolbar-color" title="Highlight color"><input type="color" v-model="highlightColor" aria-label="Highlight color" @input="changeHighlight" /></label>
+      <button type="button" title="Flashcard from selected text" aria-label="Create flashcard from highlighted text" :disabled="drawingMode !== 'text' || editor.state.selection.empty" @mousedown.prevent @click="fromHighlight"><Icon name="Layers" :size="17" /></button>
       <button type="button" title="Remove highlight from selection" aria-label="Remove highlight" :disabled="drawingMode !== 'text' || editor.state.selection.empty" @mousedown.prevent @click="command('unsetMark','highlight')">×</button>
       <button type="button" title="Add a note to selected text" aria-label="Add text annotation" :disabled="drawingMode !== 'text' || (editor.state.selection.empty && !editor.isActive('comment'))" @mousedown.prevent @click="openComment"><Icon name="MessageSquarePlus" :size="17" /></button>
       <select aria-label="Text style" :value="editor.isActive('heading',{level:1}) ? 1 : editor.isActive('heading',{level:2}) ? 2 : editor.isActive('heading',{level:3}) ? 3 : 0" @change="Number($event.target.value) ? command('setHeading',{level:Number($event.target.value)}) : command('setParagraph')"><option value="0">Normal text</option><option value="1">Heading 1</option><option value="2">Heading 2</option><option value="3">Heading 3</option></select>

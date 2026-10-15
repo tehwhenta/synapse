@@ -33,7 +33,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (accountDeletion.value?.reason === 'inactive' && accountDeletion.value.status === 'pending' && new Date(accountDeletion.value.delete_after).getTime() > Date.now()) {
       const activity = await supabase.rpc('mark_app_activity')
       if (version !== profileVersion || id !== user.value?.id) return
-      if (!activity.error) { accountDeletion.value = null; notice.value = 'Hello there! Your inactive-account cleanup was cancelled.' }
+      if (!activity.error) { accountDeletion.value = null; notice.value = 'Welcome back. Your inactive-account cleanup was cancelled.' }
     }
     if (accountDeletion.value) { accountReady.value = false; profile.value = null; return }
     const [result, admin] = await Promise.all([
@@ -136,7 +136,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function updateProfile(name, photo = null, removePhoto = false) {
     const display_name = name.trim()
     if (!display_name || display_name.length > 80) throw new Error('Enter a name up to 80 characters.')
-    if (photo && (!['image/jpeg','image/png','image/webp'].includes(photo.type) || photo.size > 2097152 || !photo.size)) throw new Error('Choose a JPG, PNG, or WebP photo up to 2 MB.')
+    if (photo && (!['image/jpeg','image/png','image/webp'].includes(photo.type) || photo.size > 10485760 || !photo.size)) throw new Error('Choose a JPG, PNG, or WebP photo up to 10 MB.')
     const oldPath = profile.value?.avatar_path; let avatar_path = removePhoto ? null : oldPath || null
     if (demo.value) {
       if (photo) avatar_path = await new Promise((resolve,reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(new Error('Could not read this photo.')); reader.readAsDataURL(photo) })

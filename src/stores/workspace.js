@@ -4,6 +4,8 @@ import { validateNoteContent, noteSaveError } from '../lib/noteContent'
 import { invitationUrl, invitationToken } from '../lib/appUrl'
 import { ref, computed } from 'vue'
 import { supabase } from '../lib/supabase'
+import { invokeGeneration } from '../lib/generationApi'
+import { useLearningStore } from './learning'
 import { useAuthStore } from './auth'
 import { demoData } from '../lib/demo'
 import { validateFile, fileType, extractOfficeText } from '../lib/documents'
@@ -229,6 +231,20 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     else { deck=check(await supabase.rpc('create_manual_deck',{ p_folder_id:selectedFolderId.value,p_title:title,p_cards:cards })); await loadFolder() }
     return deck
   }
+  async function saveHighlightCards(source,title,cards,deckId=null) {
+    if(!canEdit.value || source.kind!=='note')throw new Error('Editor access required.')
+    if(!cards.length || cards.length>100 || cards.some(c=>!c.front.trim() || !c.back.trim() || c.front.length>1000 || c.back.length>2000))throw new Error('Each card needs a question and answer within the card limits.')
+    if(auth.demo){
+      if(!deckId)return createManualDeck(title,cards)
+      const deck=assets.value.find(a=>a.id===deckId && a.is_custom && a.created_by===auth.user.id && a.folder_id===source.folder_id)
+      if(!deck)throw new Error('Choose your own custom deck in this space.')
+      const data=[...deck.data,...cards.map(c=>({id:crypto.randomUUID(),front:c.front.trim(),back:c.back.trim()}))]
+      if(data.length>100 || new TextEncoder().encode(JSON.stringify(data)).length>120000)throw new Error('This deck is full. Create another deck.')
+      deck.data=data;persistDemo();return deck
+    }
+    const result=check(await supabase.rpc('save_highlight_cards',{p_source_id:source.id,p_title:title,p_cards:cards,p_deck_id:deckId}))
+    await loadFolder(new Set(['study_assets']));return result
+  }
   async function updateCustomCard(asset,cardId,front=null,back=null,remove=false) {
     if(!canEdit.value || !asset.is_custom || asset.kind!=='deck') throw new Error('Editor access to a custom deck is required.')
     if(!remove && (!front?.trim() || !back?.trim() || front.length>1000 || back.length>2000)) throw new Error('Enter a question and answer within the card limits.')
@@ -241,12 +257,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       persistDemo()
     } else {result=check(await supabase.rpc('update_custom_card',{p_asset_id:asset.id,p_card_id:cardId,p_front:front,p_back:back,p_delete:remove}));progress.value=check(await supabase.from('flashcard_progress').select('*').eq('user_id',auth.user.id));await loadFolder()}
     return result
-  }
-  async function invokeGeneration(body) {
-    const response = await supabase.functions.invoke('generate-study', { body })
-    if (response.error) { let message = response.error.message; try { message = (await response.error.context.json()).error || message } catch {}; const error=new Error(message);error.transient=!response.error.context || response.error.context.status>=500;throw error }
-    if (response.data?.error) throw new Error(response.data.error)
-    return response.data
   }
   async function deleteAsset(id) {
     if (!canEdit.value) throw new Error('Editor access required.')
@@ -289,6 +299,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
   async function submitQuiz(asset, answers) {
     const result = auth.demo ? quizResult(asset.data, answers) : check(await supabase.rpc('submit_quiz', { p_asset_id: asset.id, p_answers: answers }))
+    const learning=useLearningStore();learning.recordDemo(asset,answers,result);learning.invalidate()
     if (auth.demo) { attempts.value.unshift({ id: crypto.randomUUID(), asset_id: asset.id, correct: result.correct, total: result.total, created_at: new Date().toISOString() }); persistDemo() }
     else await load()
     return result
@@ -386,9 +397,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function dispose() {
     ++generationVersion;for(const timer of generationCompletionTimers.values())clearTimeout(timer);generationCompletionTimers.clear();recentGeneration.value=new Set();clearTimeout(generationTimer);pollingGeneration=false;generationTasks.value=[];generationConnection.value='';globalThis.window?.removeEventListener('online',wakeGeneration);globalThis.document?.removeEventListener('visibilitychange',wakeGeneration);generationListening=false
     ++loadVersion; ++folderVersion; ++subscriptionVersion; ++workspaceSubscriptionVersion; clearTimeout(reloadTimer); reloadTimer = null; clearTimeout(workspaceReloadTimer); reloadTables.clear()
+    useLearningStore().dispose()
     const channels = [changeChannel,folderChannel]; changeChannel = null; folderChannel = null
     folders.value = []; assets.value = []; selectedFolderId.value = null; members.value = []; messages.value = []; attempts.value = []; sessions.value = []; progress.value = []; documents.value = []; activities.value = []; moreAssets.value = false; moreDocuments.value = false; personalStats.value = null; loading.value = false
     await Promise.all(channels.filter(Boolean).map(channel => supabase?.removeChannel(channel)))
   }
-  return { generationTasks,activeGeneration,folderGeneration,generationConnection,taskForDocument,pollGeneration,updateCustomCard,folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, createManualDeck, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
+  return { generationTasks,activeGeneration,folderGeneration,generationConnection,taskForDocument,pollGeneration,saveHighlightCards,updateCustomCard,folders, assets, documents, members, activities, messages, attempts, progress, sessions, selectedFolderId, selectedFolder, folderAssets, latestAssets, folderDocuments, isOwner, canEdit, stats, moreAssets, moreDocuments, loading, uploading, uploadLabel, error, load, loadFolder, loadMore, selectFolder, createFolder, renameFolder, deleteFolder, saveNote, renameAsset, listSets, readAsset, readDocument, refreshAsset, createManualDeck, deleteAsset, uploadDocument, retryDocument, submitQuiz, reviewCard, logSession, createInvitation, acceptInvitation, updateMember, sendMessage, subscribe, dispose }
 })

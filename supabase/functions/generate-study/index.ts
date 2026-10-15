@@ -42,8 +42,17 @@ Deno.serve(async req=>{
   try {input=JSON.parse(body)}catch{return respond({error:'Invalid JSON request.'},400)}
   const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   const targets=['document_id','material_id','asset_id']
-  if(!input || typeof input!=='object' || !['enqueue','prepare','generate'].includes(input.action) || targets.filter(k=>input[k]!=null).length!==1 || !uuid.test(input[targets.find(k=>input[k]!=null)!]))return respond({error:'Choose a valid source or study set.'},400)
+  if(!input || typeof input!=='object' || !['enqueue','study-tool','prepare','generate'].includes(input.action) || targets.filter(k=>input[k]!=null).length!==1 || !uuid.test(input[targets.find(k=>input[k]!=null)!]))return respond({error:'Choose a valid source or study set.'},400)
   if(input.text!=null && (typeof input.text!=='string' || input.text.length>100000))return respond({error:'Document text is too large.'},400)
+  if(input.action==='study-tool'){
+   if(!uuid.test(input.request_id) || !input.asset_id || !['highlights','connections'].includes(input.tool) || !Array.isArray(input.highlights) || input.highlights.length>20 || input.highlights.some((text:unknown)=>typeof text!=='string' || text.trim().length<2 || text.length>2000) || input.tool==='highlights' && !input.highlights.length || input.tool==='connections' && input.highlights.length)return respond({error:'Choose a saved reviewer and valid highlights.'},400)
+   const ready=await admin.rpc('generation_queue_ready')
+   if(ready.error || !ready.data)return respond({error:'Generation setup is incomplete. The app owner needs to finish the queue setup.'},503)
+   const result=await admin.rpc('enqueue_study_tool',{p_user_id:user.id,p_request_id:input.request_id,p_asset_id:input.asset_id,p_tool:input.tool,p_highlights:input.highlights})
+   if(result.error)throw result.error
+   if(result.data?.task && result.data.task.status!=='completed')await admin.rpc('dispatch_generation_queue')
+   return respond({success:true,...result.data},result.data?.output?200:202)
+  }
   if(input.action==='enqueue'){
    if(!uuid.test(input.request_id) || input.material_id)return respond({error:'A request ID and uploaded file or study set are required.'},400)
    const ready=await admin.rpc('generation_queue_ready')

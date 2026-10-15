@@ -1,10 +1,10 @@
-# Current update: Synapse 1.9.1
+# Current update: Synapse 2.0.1
 
-Follow [NOTE_SAVE_FIX.md](NOTE_SAVE_FIX.md) to fix rich-note saving and enable blank-note window resizing. Run SQL 019 before deploying the matching frontend. The generation pipeline remains the 1.9.0 version described in [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md).
+Follow [LEARNING_TOOLS_SETUP.md](LEARNING_TOOLS_SETUP.md) for Mistake Notebook, AI Flashcards from Highlights, AI Concept Connections, 10 MB profile photos and automatic orphan cleanup. Apply SQL 020 then 021, replace generate-study, cleanup-files and admin-maintenance, then deploy the frontend.
 
 # Synapse: exact Supabase setup
 
-**Already set up Synapse? Follow [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md).** For `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful migrations.
+**Already set up Synapse? Follow [LEARNING_TOOLS_SETUP.md](LEARNING_TOOLS_SETUP.md).** For `rcgsynapse.vercel.app`, use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Do not rerun successful migrations.
 
 Complete these steps once for your new project. Use the Dashboard route below; the CLI alternative at the end does the same deployments. Do not use both deployment routes unless updating a function.
 
@@ -27,7 +27,7 @@ Complete these steps once for your new project. Use the Dashboard route below; t
 5. Confirm the query succeeds before proceeding.
 6. Open another new query, paste the entire contents of `supabase/migrations/003_study_refinements.sql`, and click **Run** once. This adds the current saved-set, photo, and space-deletion features.
 7. In another new query, run `supabase/migrations/004_reviewer_accounts.sql` once. It adds reviewer drawings and the 48-hour account deletion lifecycle. Then run `006_system_maintenance.sql` once. After the cleanup job's original Vault setup below, use `005_cleanup_interval.sql` to update it to every ten minutes. Follow `ADMIN_AND_READINESS.md` to create the admin function and bind the confirmed admin account.
-8. Run `007_admin_email_type.sql`, `008_guided_generation.sql`, `009_seeds_and_custom_cards.sql`, `010_automatic_study.sql`, and `011_generation_reliability.sql` in that order, each as a separate complete query, before deploying the generation function. The latest workflow automatically generates all three study formats without Seeds/topic choices and revises invalid drafts within the same click. Study files retain the 20 MB cap. Then run `012_generation_queue.sql`, `014_safe_database_cleanup.sql`, `015_generation_refinement.sql`, `017_generation_performance.sql`, `018_streaming_generation.sql`, and `019_rich_note_capacity.sql`. After the functions and Vault secrets below are configured, run `013_generation_schedule.sql`, then `016_faster_generation_schedule.sql` last; the new queue needs these schedules. Follow `GENERATION_PERFORMANCE_SETUP.md` for exact deployment order.
+8. Run `007_admin_email_type.sql`, `008_guided_generation.sql`, `009_seeds_and_custom_cards.sql`, `010_automatic_study.sql`, and `011_generation_reliability.sql` in that order, each as a separate complete query, before deploying the generation function. The latest workflow automatically generates all three study formats without Seeds/topic choices and revises invalid drafts within the same click. Study files retain the 20 MB cap. Then run `012_generation_queue.sql`, `014_safe_database_cleanup.sql`, `015_generation_refinement.sql`, `017_generation_performance.sql`, `018_streaming_generation.sql`, `019_rich_note_capacity.sql`, and `020_learning_tools_and_cleanup.sql`. After the functions and Vault secrets below are configured, run `013_generation_schedule.sql`, then `016_faster_generation_schedule.sql` last; the new queue needs these schedules. Follow `GENERATION_PERFORMANCE_SETUP.md` for exact deployment order.
 
 Run it once in a new project. It uses a transaction: a failed run rolls back the whole script. If it succeeded, do not run it again. It does not wipe existing tables to make re-runs appear successful.
 
@@ -35,7 +35,7 @@ The script creates all application tables, profile signup trigger, owner/viewer/
 
 Check **Table Editor** for `profiles`, `folders`, `folder_members`, `folder_invitations`, `document_files`, `study_assets`, `quiz_attempts`, `flashcard_progress`, `study_sessions`, `activity_events`, and `study_messages`.
 
-Check **Storage** for `study-files` and `profile-photos`. Leave both **private**. Their limits are 20 MB for study files and 2 MB for JPG/PNG/WebP profile photos; SQL sets the MIME restrictions and policies.
+Check **Storage** for `study-files` and `profile-photos`. Leave both **private**. Their limits are 20 MB for study files and 10 MB for JPG/PNG/WebP profile photos after SQL 020; SQL sets the MIME restrictions and policies.
 
 ## 3. Configure Authentication
 

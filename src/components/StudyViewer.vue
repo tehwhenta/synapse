@@ -5,19 +5,28 @@ import { downloadFile, safeFilename, ankiTsv, quizResult } from '../lib/utils'
 import { noteHtml, plainStudyText, escapeHtml } from '../lib/richText'
 import { renderStudyHtml, printableCards, printableQuiz, studySheet } from '../lib/studyRendering'
 import { fileExpiry } from '../lib/sourceFiles'
+import { validateNoteContent } from '../lib/noteContent'
+import {selectedReviewerText} from '../lib/studyTools'
 import { cleanAnnotations, annotatedHtml } from '../lib/annotations'
 const RichEditor = defineAsyncComponent(() => import('./RichEditor.vue'))
 import DrawingLayer from './DrawingLayer.vue'
 import Modal from './Modal.vue'
 import Icon from './Icon.vue'
 import GenerationProgress from './GenerationProgress.vue'
+const HighlightCards=defineAsyncComponent(()=>import('./HighlightCards.vue'))
+const ConceptConnections=defineAsyncComponent(()=>import('./ConceptConnections.vue'))
 const props = defineProps({ asset: Object })
-const emit = defineEmits(['close', 'notify', 'reupload', 'custom-deck'])
+const emit = defineEmits(['close', 'notify', 'reupload', 'custom-deck', 'mistakes'])
 const workspace = useWorkspaceStore()
 const asset = ref({ ...props.asset }), sets = ref([props.asset]), setsLoading = ref(false)
 const editing = ref(false), renaming = ref(false), draft = ref(''), title = ref(asset.value.title), busy = ref(false), error = ref(''), discard = ref(false)
 const draftAnnotations = ref([])
-const viewerPaper = ref(null)
+const viewerPaper = ref(null),tool=ref(''),highlightSelection=ref('')
+function closeToolMenu(){document.querySelectorAll('.viewer-options[open]').forEach(el=>el.removeAttribute('open'))}
+async function openTool(name){closeToolMenu();if(editing.value && dirty.value && !await save())return;tool.value=name}
+function openHighlights(text=''){highlightSelection.value=typeof text==='string'?text:selectedReviewerText(viewerPaper.value);openTool('cards')}
+function highlightsSaved(){tool.value='';emit('notify','Your highlight flashcards are saved.')}
+
 const cardIndex = ref(0), flipped = ref(false), reviewed = ref(new Set()), studyMode = ref('all')
 const customDeck=computed(()=>asset.value.kind==='deck' && asset.value.is_custom===true)
 const cardEditing=ref(false),cardDeleting=ref(false),cardDraft=ref({id:'',front:'',back:''})
@@ -43,7 +52,7 @@ const setIndex = computed(() => sets.value.findIndex(s => s.id === asset.value.i
 const printHtml = computed(() => asset.value.kind === 'note' ? `<h1>${escapeHtml(asset.value.title)}</h1>${html.value}${comments.value.length ? '<section><h2>Text annotations</h2><ol>'+comments.value.map(comment=>'<li><strong>'+escapeHtml(comment.text)+'</strong>: '+escapeHtml(comment.note)+'</li>').join('')+'</ol></section>' : ''}` : asset.value.kind === 'deck' ? printableCards(asset.value.title,asset.value.data) : printableQuiz(asset.value.title,asset.value.data))
 const dirty = computed(() => cardEditing.value || editing.value && (draft.value !== noteHtml(asset.value.content,asset.value.content_format) || title.value !== asset.value.title || JSON.stringify(draftAnnotations.value) !== JSON.stringify(cleanAnnotations(asset.value.annotations))))
 watch(studyMode, () => { cardIndex.value = 0; flipped.value = false; reviewed.value = new Set() })
-watch(() => asset.value.id, () => { cardIndex.value = 0; flipped.value = false; reviewed.value = new Set(); restartQuiz(); renaming.value = false; title.value = asset.value.title })
+watch(() => asset.value.id, () => { cardIndex.value = 0; flipped.value = false; reviewed.value = new Set(); restartQuiz(); renaming.value = false; title.value = asset.value.title;tool.value='' })
 watch(() => asset.value.document_id, async id => {
   sourceDocument.value = null; refreshWarning.value = false
   if (!id) return
@@ -75,13 +84,13 @@ function requestClose() { if (busy.value) return; if (dirty.value) discard.value
 async function save() {
   busy.value = true; error.value = ''
   try {
-    if (draft.value.length > 60000) throw new Error('This note is too long to save. Keep it under 60,000 characters including formatting.')
+    validateNoteContent(draft.value,'html')
     if (!plainStudyText(draft.value,'html').trim()) throw new Error('Write something in your reviewer first.')
     if (new TextEncoder().encode(JSON.stringify(draftAnnotations.value)).length > 256000) throw new Error('These drawings are too large to save. Remove some strokes and try again.')
     await workspace.saveNote(title.value.trim(),draft.value,asset.value.id,'html',draftAnnotations.value)
     Object.assign(asset.value,{ title:title.value.trim(),content:draft.value,content_format:'html',annotations:cleanAnnotations(draftAnnotations.value) }); editing.value = false
-    await loadSets(); emit('notify','Your reviewer is saved.')
-  } catch (e) { error.value = e.message } finally { busy.value = false }
+    await loadSets(); emit('notify','Your reviewer is saved.'); return true
+  } catch (e) { error.value = e.message; return false } finally { busy.value = false }
 }
 async function saveTitle() {
   busy.value = true; error.value = ''
@@ -145,9 +154,13 @@ onBeforeUnmount(() => { alive = false; clearInterval(clock); finishPrint(); wind
     <div class="viewer-content">
       <div class="viewer-toolbar"><span class="pill"><Icon :name="asset.kind === 'note' ? 'FileText' : asset.kind === 'deck' ? 'Layers' : 'CheckCheck'" :size="14" />{{ asset.kind === 'note' ? 'Reviewer' : asset.kind === 'deck' ? 'Flashcards' : 'Practice quiz' }}</span>
         <div class="inline-actions">
-          <button v-if="workspace.canEdit && !editing && !cardEditing && !cardDeleting" class="button ghost small" :disabled="busy || renaming" @click="renaming = true; title = asset.title"><Icon name="Edit3" :size="15" />Rename</button>
-          <button v-if="asset.kind === 'note' && workspace.canEdit && !editing" class="button ghost small" :disabled="busy" @click="startEditing">Edit reviewer</button>
-          <details class="export-menu" v-if="!editing"><summary class="button ghost small"><Icon name="Download" :size="15" />Export</summary><div><button @click="printAsset">Print / Save as PDF</button><button @click="exportAsset('html')">Study sheet (.html)</button><button @click="exportAsset('txt')">Plain text (.txt)</button><button v-if="asset.kind === 'deck'" @click="exportAsset('anki')">Anki import (.tsv)</button></div></details>
+          <button v-if="asset.kind==='note' && workspace.canEdit && !editing" class="icon-button" aria-label="Edit reviewer" title="Edit" :disabled="busy" @click="startEditing();tool=''"><Icon name="PenLine" :size="18" /></button>
+          <details class="compact-menu viewer-options" @keydown.esc.stop="closeToolMenu"><summary class="icon-button" aria-label="Study options" title="Study tools" @mousedown.prevent><Icon name="MoreHorizontal" /></summary><div>
+            <template v-if="asset.kind==='note'"><button v-if="workspace.canEdit" @mousedown.prevent @click="openHighlights(selectedReviewerText(viewerPaper))"><Icon name="Highlighter" :size="16" />Flashcards from highlights</button><button @click="openTool('connections')"><Icon name="Network" :size="16" />Concept connections</button></template>
+            <button v-if="asset.kind==='quiz'" @click="emit('mistakes')"><Icon name="NotebookPen" :size="16" />Mistake notebook</button>
+            <button v-if="workspace.canEdit && !editing && !cardEditing && !cardDeleting" :disabled="busy || renaming" @click="renaming=true;title=asset.title;closeToolMenu()"><Icon name="TextCursorInput" :size="16" />Rename</button>
+          </div></details>
+          <details class="export-menu compact-menu" v-if="!editing"><summary class="icon-button" aria-label="Export study set" title="Export"><Icon name="Download" :size="18" /></summary><div><button @click="printAsset">Print / Save as PDF</button><button @click="exportAsset('html')">Study sheet (.html)</button><button @click="exportAsset('txt')">Plain text (.txt)</button><button v-if="asset.kind === 'deck'" @click="exportAsset('anki')">Anki import (.tsv)</button></div></details>
         </div>
       </div>
       <div class="set-toolbar"><nav class="set-navigation" aria-label="Study sets"><span class="tiny muted">SET</span><button class="icon-button" aria-label="Previous set" :disabled="setIndex <= 0 || busy || editing || renaming" @click="selectSet(sets[setIndex-1])"><Icon name="ChevronLeft" :size="16" /></button><div class="set-numbers"><button v-for="set in sets" :key="set.id" :aria-label="'Open set '+(set.set_number || 1)" :aria-current="set.id === asset.id ? 'page' : undefined" :class="{ active:set.id === asset.id }" :disabled="busy || editing || renaming" @click="selectSet(set)">{{ set.set_number || 1 }}</button></div><button class="icon-button" aria-label="Next set" :disabled="setIndex >= sets.length-1 || busy || editing || renaming" @click="selectSet(sets[setIndex+1])"><Icon name="ChevronRight" :size="16" /></button></nav>
@@ -159,8 +172,10 @@ onBeforeUnmount(() => { alive = false; clearInterval(clock); finishPrint(); wind
       <div v-if="discard" class="discard-panel"><p>You have unsaved edits.</p><button class="button secondary small" @click="discard = false">Keep editing</button><button class="button danger small" @click="emit('close')">Discard and close</button></div>
       <form v-if="renaming" class="rename-form stack-form" @submit.prevent="saveTitle"><label>Title for this set<input v-model="title" required maxlength="150" /></label><div class="inline-actions"><button type="button" class="button secondary small" :disabled="busy" @click="renaming = false">Cancel</button><button class="button primary small" :disabled="busy || !title.trim()">Save title<Icon name="Check" :size="15" /></button></div></form>
       <template v-if="asset.kind === 'note'">
-        <form v-if="editing" class="stack-form note-editor" @submit.prevent="save"><label>Title for this set<input v-model="title" required maxlength="150" /></label><RichEditor v-model="draft" v-model:annotations="draftAnnotations" /><div class="inline-actions"><button type="button" class="button secondary" :disabled="busy" @click="editing = false">Cancel edits</button><button class="button primary" :disabled="busy || !title.trim()">{{ busy ? 'Saving…' : 'Save reviewer' }}<Icon name="Check" :size="16" /></button></div></form>
-        <template v-else><article ref="viewerPaper" class="annotated-paper reviewer-paper"><div class="markdown" v-html="readHtml"></div><DrawingLayer :host="viewerPaper" :model-value="asset.annotations || []" mode="text" /></article><details v-if="comments.length" class="reviewer-comments"><summary>Text annotations ({{ comments.length }})</summary><dl><template v-for="(comment,i) in comments" :key="i"><dt>{{ comment.text }}</dt><dd>{{ comment.note }}</dd></template></dl></details></template>
+        <HighlightCards v-if="tool==='cards'" :key="asset.id+highlightSelection" :asset="asset" :selection="highlightSelection" :content="editing?draft:asset.content" :format="editing?'html':asset.content_format" @close="tool=''" @saved="highlightsSaved" />
+        <ConceptConnections v-else-if="tool==='connections'" :asset="asset" @close="tool=''" />
+        <form v-if="editing" v-show="!tool" class="stack-form note-editor" @submit.prevent="save"><label>Title for this set<input v-model="title" required maxlength="150" /></label><RichEditor v-model="draft" v-model:annotations="draftAnnotations" @flashcard="openHighlights" /><div class="inline-actions"><button type="button" class="button secondary" :disabled="busy" @click="editing = false">Cancel edits</button><button class="button primary" :disabled="busy || !title.trim()">{{ busy ? 'Saving…' : 'Save reviewer' }}<Icon name="Check" :size="16" /></button></div></form>
+        <template v-else><article v-show="!tool" ref="viewerPaper" class="annotated-paper reviewer-paper"><div class="markdown" v-html="readHtml"></div><DrawingLayer :host="viewerPaper" :model-value="asset.annotations || []" mode="text" /></article><details v-if="comments.length && !tool" class="reviewer-comments"><summary>Text annotations ({{ comments.length }})</summary><dl><template v-for="(comment,i) in comments" :key="i"><dt>{{ comment.text }}</dt><dd>{{ comment.note }}</dd></template></dl></details></template>
       </template>
       <template v-else-if="asset.kind === 'deck'">
         <button v-if="workspace.canEdit && !customDeck" class="button ghost small custom-deck-shortcut" @click="emit('custom-deck')"><Icon name="Plus" :size="15" />Create custom flashcards</button>

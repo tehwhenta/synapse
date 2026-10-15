@@ -1,12 +1,12 @@
-# Current update: Synapse 1.9.1
+# Current update: Synapse 2.0.1
 
-Follow [NOTE_SAVE_FIX.md](NOTE_SAVE_FIX.md) to fix rich-note saving and enable blank-note window resizing. Run SQL 019 before deploying the matching frontend. The generation pipeline remains the 1.9.0 version described in [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md).
+Follow [LEARNING_TOOLS_SETUP.md](LEARNING_TOOLS_SETUP.md) for Mistake Notebook, AI Flashcards from Highlights, AI Concept Connections, 10 MB profile photos and automatic orphan cleanup. Apply SQL 020 then 021, replace generate-study, cleanup-files and admin-maintenance, then deploy the frontend.
 
 # Synapse
 
 A Vue 3 study workspace, designed around your cream, sand, taupe, olive, and warm brown palette.
 
-**Already installed Synapse? Start with [STREAMING_EDITOR_SETUP.md](STREAMING_EDITOR_SETUP.md).** Older release guides are historical. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
+**Already installed Synapse? Start with [LEARNING_TOOLS_SETUP.md](LEARNING_TOOLS_SETUP.md).** Older release guides are historical. For GitHub/Vercel use [VERCEL_SUPABASE_DEPLOY.md](VERCEL_SUPABASE_DEPLOY.md). Gmail SMTP and email-code configuration remains in [GMAIL_SMTP_OTP_SETUP.md](GMAIL_SMTP_OTP_SETUP.md).
 
 ## Start here
 
@@ -121,7 +121,7 @@ Then paste the updated files from `supabase/dashboard/`.
 - Generated materials can contain mistakes. Important information should be checked against the uploaded source.
 - Gmail SMTP replaces the built-in email sender, but Gmail and Supabase rate limits still apply. Use the setup guide's app-password instructions and enable Confirm email; changing templates does not by itself implement code entry.
 - Refreshed materials use retained source text after raw-file cleanup. A still-available PDF/image is preferred when refreshing it. Each material type generates independently through manual parameters or a scanned topic. All retained question history supplies duplicate checks; counts and history survive set deletion. Similar wording and repeated learning objectives are rejected. A small source may run out of fresh content before its numeric cap; no AI system can promise absolute semantic uniqueness.
-- Profile photos are private JPG/PNG/WebP files up to 2 MB. Shared study peers can view the current photo through temporary signed links.
+- Profile photos are private JPG/PNG/WebP files up to 10 MB. Shared study peers can view the current photo through temporary signed links.
 - Space deletion removes the space's records and all members' related progress immediately. Remaining raw objects are queued for Storage API cleanup by the scheduled job.
 - Account deletion is opt-in. New sign-in within 48 hours cancels it; after the deadline cleanup removes the Auth account, owned spaces, authored/uploaded shared materials, profile/photos, memberships, progress, and messages. Other Auth accounts remain. Cleanup retries storage/provider errors. Already exported copies and provider backups have separate retention.
 - Drawings follow paragraph anchors. Large text edits or substantial paragraph reflow can change alignment, so finish wording before drawing. HTML/print exports preserve drawings and highlights; plain-text export contains text.

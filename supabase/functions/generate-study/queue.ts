@@ -1,4 +1,5 @@
 import { executeGeneration } from './engine.ts'
+import { executeStudyTool } from './studyTools.ts'
 import { GeminiRequestError, StudyDraftError } from './errors.ts'
 import { generationRequestBudgetMs } from './reliable.ts'
 import { UploadReadError, unreadableUploadMessage } from '../_shared/uploadTypes.ts'
@@ -9,6 +10,7 @@ export const minimumContinuationBudgetMs=70000
 export function queueRecovery(error: unknown, attempts: number) {
  const message=error instanceof Error?error.message:String(error)
  const status=error instanceof GeminiRequestError?error.status:0
+ if(/Reviewer changed|selected highlight|saved reviewer|more readable content/i.test(message))return {seconds:null,message,providerBusy:false,reason:'source'}
  if(error instanceof UploadReadError)return {seconds:null,message:error.message,providerBusy:false,reason:'source'}
  if(/access required|scheduled for deletion|permission denied/i.test(message))return {seconds:null,message:'Generation stopped because this source or account is no longer accessible.',providerBusy:false,reason:'access'}
  if(/not legible|cannot be read|source.*expired|original.*(expired|missing)|upload.*again|blocked.*(safety|policy)/i.test(message))return {seconds:null,message:unreadableUploadMessage,providerBusy:false,reason:'source'}
@@ -40,7 +42,8 @@ export async function runQueuedGeneration(admin: any, ticket: any) {
    const input:any={action:task.stage==='prepare'?'prepare':'generate',text:task.source_text}
    if(task.document_id){input.document_id=task.document_id;input.kind=task.stage;input.initial=true}
    else input.asset_id=task.asset_id
-   await executeGeneration(admin,task.user_id,input,task,deadline,metrics)
+   if(task.tool)await executeStudyTool(admin,task,deadline,metrics)
+   else await executeGeneration(admin,task.user_id,input,task,deadline,metrics)
    if(task.stage==='prepare'){
     const done=await admin.rpc('finish_generation_prepare',{p_task_id:task.id,p_lease:task.lease_token})
     if(done.error)throw done.error
