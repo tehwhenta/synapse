@@ -19,7 +19,10 @@ export function useStudyTool(asset,tool) {
  function apply(result){
   if(result?.output){
    if(result.output.verification?.version!==2 || !result.fingerprint)throw new Error('Update the study-tools SQL and generate-study function to load checked results.')
-   output.value=result.output;context.value={fingerprint:result.fingerprint,highlights:[...highlights]};task.value=result.task || null;return
+   output.value=result.output;context.value={fingerprint:result.fingerprint,highlights:[...highlights]};task.value=result.task || null
+   // The server transaction has already saved the material.
+   void workspace.loadFolder(new Set(['study_assets'])).catch(()=>{})
+   return
   }
   if(!result?.task)throw new Error('The study tools need the latest database and generation update.')
   task.value=result.task

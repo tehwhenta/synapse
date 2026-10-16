@@ -5,10 +5,10 @@ import {useAuthStore} from '../stores/auth'
 import GenerationProgress from './GenerationProgress.vue'
 import Icon from './Icon.vue'
 import {renderStudyHtml} from '../lib/studyRendering'
-const props=defineProps({asset:Object}),emit=defineEmits(['close']),auth=useAuthStore()
+const props=defineProps({asset:Object,savedGraph:{type:Object,default:null}}),emit=defineEmits(['close']),auth=useAuthStore()
 const {output,task,busy,error,connection:connectionStatus,generate}=useStudyTool(()=>props.asset,'connections')
 const markerId='concept-arrow-'+useId()
-const graph=computed(()=>output.value || {nodes:[],edges:[]})
+const graph=computed(()=>props.savedGraph || output.value || {nodes:[],edges:[]})
 const chosen=ref(null),search=ref(''),connection=ref(null)
 const current=computed(()=>graph.value.nodes.find(n=>n.id===chosen.value) || graph.value.nodes[0])
 const visible=computed(()=>graph.value.nodes.filter(n=>n.label.toLocaleLowerCase().includes(search.value.toLocaleLowerCase())))
@@ -19,7 +19,7 @@ const orbit=computed(()=>neighbors.value.slice(0,8).map((item,i,list)=>{
  const inset=Math.min(79/Math.abs(nx || 1e-10),29/Math.abs(ny || 1e-10)),near={x:300+nx*33,y:190+ny*33},far={x:x-nx*inset,y:y-ny*inset}
  return {...item,x,y,start:item.edge.from===current.value.id?near:far,end:item.edge.from===current.value.id?far:near}
 }))
-watch(()=>[props.asset.id,props.asset.content,props.asset.content_format],()=>{chosen.value=null;search.value='';connection.value=null;void generate()}, {immediate:true})
+watch(()=>[props.asset.id,props.asset.content,props.asset.content_format,props.savedGraph],()=>{chosen.value=null;search.value='';connection.value=null;if(!props.savedGraph)void generate()}, {immediate:true})
 watch(current,()=>{connection.value=null})
 </script>
 <template>

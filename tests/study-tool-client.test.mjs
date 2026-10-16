@@ -18,11 +18,11 @@ before(async()=>{
  writeFileSync(runtimePath,bundle.outputFiles[0].text);runtime=await import(pathToFileURL(runtimePath).href)
  const utils=await import('@vue/test-utils');mount=utils.mount;flushPromises=utils.flushPromises
 })
-after(()=>{for(const key of ['__toolAuth','__toolWorkspace','__toolClient'])delete globalThis[key];dom.window.close();try{unlinkSync(runtimePath)}catch{}})
+after(()=>{for(const key of ['__toolAuth','__toolWorkspace','__toolClient','__toolReloads'])delete globalThis[key];dom.window.close();try{unlinkSync(runtimePath)}catch{}})
 const asset={id:crypto.randomUUID(),title:'Queues',content:'FIFO means first in first out.',content_format:'markdown'}
 const result={verification:{version:2,checked_items:1},cards:[{highlight_id:'h1',front:'What does FIFO mean?',back:'First in first out.',evidence:{source:'reviewer',quote:asset.content}}]}
 function setup(tool='highlights'){
- localStorage.clear();globalThis.__toolAuth=runtime.reactive({demo:false,user:{id:crypto.randomUUID()}});globalThis.__toolWorkspace={canEdit:true}
+ localStorage.clear();globalThis.__toolAuth=runtime.reactive({demo:false,user:{id:crypto.randomUUID()}});globalThis.__toolReloads=[];globalThis.__toolWorkspace={canEdit:true,async loadFolder(tables){globalThis.__toolReloads.push([...tables])}}
  const calls=[],task={id:crypto.randomUUID(),tool,stage:'deck',status:'queued'}
  let cached=false,finished=false
  globalThis.__toolClient={rpc:async(name,args)=>{calls.push([name,args]);return {data:name==='read_study_tool'?{fingerprint:'checked-source-hash',output:cached?result:null}:{fingerprint:'checked-source-hash',task:{...task,status:finished?'completed':'processing'},output:finished?result:null}}},invoke:async(name,args)=>{calls.push([name,args.body]);return {data:{success:true,task}}}}
@@ -31,7 +31,7 @@ function setup(tool='highlights'){
 }
 test('Cached tool output makes no provider admission request and readonly users can reuse it',async()=>{
  const {wrapper,calls,setCached}=setup();setCached(true);globalThis.__toolWorkspace.canEdit=false
- try{await wrapper.vm.generate(['FIFO']);assert.deepEqual(wrapper.vm.output,result);assert.equal(wrapper.vm.busy,false);assert.equal(calls.length,1);assert.equal(calls[0][0],'read_study_tool')}
+ try{await wrapper.vm.generate(['FIFO']);assert.deepEqual(wrapper.vm.output,result);assert.equal(wrapper.vm.busy,false);assert.equal(calls.length,1);assert.equal(calls[0][0],'read_study_tool');assert.deepEqual(globalThis.__toolReloads,[['study_assets']])}
  finally{wrapper.unmount()}
 })
 test('New AI previews enqueue once, expose progress, resume from status and stop polling when closed',async()=>{
@@ -42,7 +42,7 @@ test('New AI previews enqueue once, expose progress, resume from status and stop
   assert.equal(request.action,'study-tool');assert.equal(request.asset_id,asset.id);assert.equal(request.tool,'highlights');assert.deepEqual(request.highlights,['FIFO']);assert.ok(request.request_id)
   assert.equal(wrapper.vm.busy,true);assert.equal(wrapper.vm.output,null)
   setFinished(true);window.dispatchEvent(new dom.window.Event('online'));await flushPromises()
-  assert.deepEqual(wrapper.vm.output,result);assert.equal(wrapper.vm.busy,false)
+  assert.deepEqual(wrapper.vm.output,result);assert.equal(wrapper.vm.busy,false);assert.deepEqual(globalThis.__toolReloads,[['study_assets']])
   const count=calls.length;wrapper.unmount();window.dispatchEvent(new dom.window.Event('online'));await flushPromises();assert.equal(calls.length,count)
  }finally{if(wrapper.exists())wrapper.unmount()}
 })

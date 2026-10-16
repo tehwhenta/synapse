@@ -18,7 +18,7 @@ before(async () => {
   rich = { ...await import('../src/lib/richText.js'), ...await import('../src/lib/studyRendering.js') }
   const utils = await import('@vue/test-utils'); mount = utils.mount; flushPromises = utils.flushPromises
   const compiled = await build({ stdin:{ contents:"export {default as MistakeNotebook} from './src/components/MistakeNotebook.vue'; export {default as HighlightCards} from './src/components/HighlightCards.vue'; export {default as ConceptConnections} from './src/components/ConceptConnections.vue'; export {useLearningStore} from './src/stores/learning.js'; export {default as App} from './src/App.vue'; export {default as SpaceList} from './src/components/SpaceList.vue'; export {default as RichEditor} from './src/components/RichEditor.vue'; export {default as StudyViewer} from './src/components/StudyViewer.vue'; export {default as Modal} from './src/components/Modal.vue'; export {default as GenerationProgress} from './src/components/GenerationProgress.vue'; export {default as GenerationPerformance} from './src/components/GenerationPerformance.vue'; export {default as ManualDeckDialog} from './src/components/ManualDeckDialog.vue'; export {createPinia,setActivePinia} from 'pinia'; export {useAuthStore} from './src/stores/auth.js'; export {useWorkspaceStore} from './src/stores/workspace.js';",resolveDir:fileURLToPath(new URL('..',import.meta.url)) },bundle:true,write:false,platform:'node',format:'esm',packages:'external',define:{'import.meta.env':'{}'},plugins:[
-    {name:'vue-test',setup(builder){builder.onLoad({filter:/\.vue$/},args=>{const {descriptor}=parse(readFileSync(args.path,'utf8'));return {contents:compileScript(descriptor,{id:args.path,inlineTemplate:true}).content,loader:'js',resolveDir:dirname(args.path)}})}}
+    {name:'vue-test',setup(builder){builder.onLoad({filter:/\.vue$/},args=>{const {descriptor}=parse(readFileSync(args.path,'utf8'),{filename:args.path});return {contents:compileScript(descriptor,{id:args.path,inlineTemplate:true}).content.replace(/import\((['"])(\.\/[^'"]+\.vue)\1\)/g,'import($1$2$1).then(module=>module.default)'),loader:'js',resolveDir:dirname(args.path)}})}}
   ] })
   // Download-style asset glob is a build-time feature, irrelevant to these DOM interaction tests.
   const source = compiled.outputFiles[0].text.replace(/import mathCss from "katex\/dist\/katex.min.css\?raw";/,'const mathCss="";').replace(/const fonts = import\.meta\.glob\([^;]+;/,'const fonts={};')
@@ -432,19 +432,19 @@ test('Blank-note dialog maximizes and resizes, and a failed save retains the tit
  }finally{wrapper.unmount();await flushPromises()}
 })
 
-test('Highlights show prepared recall questions, allow editing, and save to custom decks',async()=>{
+test('Highlight cards show generated questions and evidence without a second manual save',async()=>{
  runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
  const asset={...workspace.assets.find(a=>a.kind==='note'),content_format:'html',content:'<h2>Queues</h2><p><mark>FIFO means first in first out.</mark></p>'}
  const wrapper=mount(runtime.HighlightCards,{props:{asset},attachTo:document.body})
  try{
   await flushPromises()
-  assert.equal(wrapper.find('[aria-label="Highlight question 1"]').element.value,'What does FIFO mean?')
-  assert.equal(wrapper.find('[aria-label="Highlight answer 1"]').element.value,'First in, first out.')
+  assert.match(wrapper.find('.highlight-card-row').text(),/What does FIFO mean\?/)
+  assert.match(wrapper.find('.highlight-card-row').text(),/First in, first out/)
   assert.match(wrapper.find('.tool-evidence').text(),/FIFO means first in first out/)
-  assert.equal(wrapper.find('.pill').text(),'Sample','Disconnected preview is explicitly labeled')
-  await wrapper.find('[aria-label="Highlight question 1"]').setValue('Explain FIFO ordering.')
-  await wrapper.find('form').trigger('submit');await flushPromises()
-  const deck=wrapper.emitted('saved')[0][0];assert.equal(deck.is_custom,true);assert.equal(deck.data[0].front,'Explain FIFO ordering.')
+  assert.equal(wrapper.find('.pill').text(),'Sample')
+  assert.equal(wrapper.find('form').exists(),false)
+  assert.equal(wrapper.find('[aria-label="Save highlight flashcards"]').exists(),false)
+  assert.equal(wrapper.find('[aria-label="Destination custom deck"]').exists(),false)
  }finally{wrapper.unmount();await workspace.dispose()}
 })
 test('Concept map shows specific directed relationships, explanations and source evidence',async()=>{
@@ -502,5 +502,40 @@ test('AI tool progress distinguishes checking and preview cards clear when their
  runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
  const asset={...workspace.assets.find(a=>a.kind==='note'),content_format:'html',content:'<p><mark>FIFO means first in first out.</mark></p>'}
  const wrapper=mount(runtime.HighlightCards,{props:{asset},attachTo:document.body})
- try{await flushPromises();assert.ok(wrapper.find('form').exists());await wrapper.setProps({asset:{...asset,content:'<p>The reviewer no longer has highlighted text.</p>'}});await flushPromises();assert.equal(wrapper.find('form').exists(),false);assert.match(wrapper.text(),/Highlight a passage first/)}finally{wrapper.unmount();await workspace.dispose()}
+ try{await flushPromises();assert.ok(wrapper.find('.highlight-card-row').exists());await wrapper.setProps({asset:{...asset,content:'<p>The reviewer no longer has highlighted text.</p>'}});await flushPromises();assert.equal(wrapper.find('.highlight-card-row').exists(),false);assert.match(wrapper.text(),/Highlight a passage first/)}finally{wrapper.unmount();await workspace.dispose()}
+})
+
+test('Reviewer tool buttons isolate clicks and hide the parent reviewer generation action',async()=>{
+ runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
+ const id=crypto.randomUUID(),asset={...workspace.assets.find(a=>a.kind==='note'),id,series_id:id,content_format:'html',content:'<p><mark>FIFO means first in first out.</mark></p>'};workspace.assets.unshift(asset)
+ let refreshes=0,bubbled=0;workspace.refreshAsset=async()=>{refreshes++;return {status:'queued',id:'unexpected'}}
+ const wrapper=mount(runtime.StudyViewer,{props:{asset},global:{stubs:{Teleport:true,Modal:{template:'<section><slot /></section>'},DrawingLayer:true}},attachTo:document.body})
+ try{
+  await flushPromises();const viewer=wrapper.find('.viewer-content').element;viewer.addEventListener('click',()=>bubbled++)
+  const highlight=wrapper.findAll('button').find(button=>button.text()==='Flashcards from highlights')
+  assert.equal(highlight.attributes('type'),'button');await highlight.trigger('click');await flushPromises();
+  assert.equal(bubbled,0);assert.equal(refreshes,0);assert.ok(wrapper.find('.highlight-cards').exists())
+  assert.equal(wrapper.findAll('button').some(button=>button.text()==='Generate'),false)
+  await wrapper.find('[aria-label="Generate flashcards from selected highlights"]').trigger('click');await flushPromises()
+  assert.equal(refreshes,0);assert.equal(bubbled,0)
+  await wrapper.find('[aria-label="Close highlight cards"]').trigger('click');await flushPromises()
+  const generate=wrapper.findAll('button').find(button=>button.text()==='Generate');assert.ok(generate)
+  await generate.trigger('click');await flushPromises();assert.equal(refreshes,1)
+ }finally{wrapper.unmount();await workspace.dispose()}
+})
+
+test('Saved concept maps reopen from material data without generating, exporting or rendering a quiz',async()=>{
+ runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
+ const graph={nodes:[{id:'c1',label:'Saved queue concept',body:'Preserves arrival order.',evidence:{quote:'FIFO'}},{id:'c2',label:'FIFO',body:'First in first out.',evidence:{quote:'FIFO'}}],edges:[{from:'c1',to:'c2',label:'uses',explanation:'Queue removal uses FIFO.',evidence:{quote:'FIFO'}}]}
+ const id=crypto.randomUUID(),asset={id,series_id:id,set_number:1,kind:'concept',title:'Saved Concept Map',folder_id:workspace.selectedFolderId,data:[graph],content:'',content_format:'markdown',created_by:auth.user.id};workspace.assets.unshift(asset)
+ let refreshes=0;workspace.refreshAsset=async()=>{refreshes++;throw Error('Unexpected generation')}
+ const wrapper=mount(runtime.StudyViewer,{props:{asset},global:{stubs:{Teleport:true,Modal:{template:'<section><slot /></section>'},DrawingLayer:true}},attachTo:document.body})
+ try{
+  await flushPromises();assert.match(wrapper.find('.viewer-toolbar .pill').text(),/Concept Map/)
+  assert.match(wrapper.find('.concept-detail h4').text(),/Saved queue concept/)
+  assert.equal(wrapper.find('.error-box').exists(),false);assert.equal(wrapper.find('.quiz-body').exists(),false)
+  assert.equal(wrapper.find('.export-menu').exists(),false);assert.equal(wrapper.find('.print-content').exists(),false)
+  assert.equal(wrapper.findAll('button').some(button=>button.text()==='Generate'),false);assert.equal(refreshes,0)
+  await wrapper.find('[aria-label="Close concept connections"]').trigger('click');assert.ok(wrapper.emitted('close'))
+ }finally{wrapper.unmount();await workspace.dispose()}
 })

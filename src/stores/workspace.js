@@ -390,7 +390,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       next.on('postgres_changes', { event: 'DELETE', schema: 'public', table }, reload)
     }
     next.on('postgres_changes', { event:'UPDATE',schema:'public',table:'folders',filter:`id=eq.${id}` }, () => { if (version === subscriptionVersion && id === selectedFolderId.value) queueWorkspaceReload() }).subscribe(state => {
-      if (state === 'SUBSCRIBED' && version === subscriptionVersion) queueReload('study_messages') // Catch messages missed during reconnection.
+      if (state === 'SUBSCRIBED' && version === subscriptionVersion) {
+        queueReload('study_messages')
+        queueReload('study_assets') // Recover material inserts missed offline.
+      }
     })
   }
   async function subscribe() {
