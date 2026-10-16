@@ -1,6 +1,6 @@
-# Current update: Synapse 2.0.1
+# Current update: Synapse 2.1.0
 
-Follow [LEARNING_TOOLS_SETUP.md](LEARNING_TOOLS_SETUP.md) for Mistake Notebook, AI Flashcards from Highlights, AI Concept Connections, 10 MB profile photos and automatic orphan cleanup. Apply SQL 020 then 021, replace generate-study, cleanup-files and admin-maintenance, then deploy the frontend.
+Follow [LEARNING_TOOLS_SETUP.md](LEARNING_TOOLS_SETUP.md) for Mistake Notebook, AI Flashcards from Highlights, source-checked AI Concept Connections, neumorphic styling in the existing palette, 10 MB profile photos and automatic orphan cleanup. Apply any missing SQL migrations 020 → 021 → 022, replace generate-study, cleanup-files and admin-maintenance, then deploy the frontend.
 
 # Synapse
 

@@ -1,0 +1,81 @@
+/* Soft depth, using Synapse's existing cream, olive and clay palette. */
+:root {
+  --soft-light: color-mix(in srgb, var(--paper) 30%, white);
+  --soft-shade: color-mix(in srgb, var(--olive) 20%, transparent);
+  --soft-border: color-mix(in srgb, var(--taupe) 22%, var(--paper));
+  --soft-raised: 7px 7px 18px var(--soft-shade), -7px -7px 18px var(--soft-light);
+  --soft-small: 3px 3px 7px var(--soft-shade), -3px -3px 7px var(--soft-light);
+  --soft-inset: inset 3px 3px 7px var(--soft-shade), inset -3px -3px 7px var(--soft-light);
+}
+.app-shell,.workspace-shell,.main-content { background:var(--paper); }
+.sidebar,.right-rail { background:var(--sidebar); }
+.sidebar { box-shadow:4px 0 16px color-mix(in srgb,var(--olive) 7%,transparent); }
+.topbar { background:var(--paper); border-bottom-color:var(--soft-border); }
+.upload-card,.stat-card,.material-card,.focus-card,.study-tool-panel,.mistake-notebook,.chat-panel,.call-stage,.inactive-section {
+  border:1px solid var(--soft-border); border-radius:18px; box-shadow:var(--soft-raised);
+}
+.upload-card { background:var(--sidebar); }
+.stat-card,.material-card,.study-tool-panel,.mistake-notebook,.inactive-section { background:var(--paper); }
+.stat-card { border-radius:14px; }
+.material-card { transition:box-shadow .2s ease,transform .2s ease,border-color .2s ease; }
+.material-card:hover { border-color:color-mix(in srgb,var(--olive) 45%,var(--paper)); box-shadow:10px 10px 23px var(--soft-shade),-8px -8px 20px var(--soft-light); transform:translateY(-2px); }
+.material-open { border-radius:inherit; }
+.blank-note-card { background:var(--paper); border:1px dashed var(--taupe); border-radius:18px; box-shadow:var(--soft-inset); }
+.blank-note-card > span,.upload-symbol,.material-icon { box-shadow:var(--soft-small); }
+.focus-card { background:#eef1e3; }
+.timer-wheel { border-radius:16px; box-shadow:var(--soft-inset); background:#eef1e3; }
+.button,.icon-button,.compact-menu > summary,.set-numbers button,.segmented button,.main-navigation button,.folder-button {
+  transition:box-shadow .18s ease,background .18s ease,color .18s ease,border-color .18s ease,transform .18s ease;
+}
+.button.secondary,.icon-button,.compact-menu > summary { border:1px solid var(--soft-border); border-radius:11px; background:var(--paper); box-shadow:var(--soft-small); }
+.button.primary,.primary-action { border-radius:11px; border:1px solid var(--green); background:var(--green); color:#fffef9; box-shadow:3px 3px 8px var(--soft-shade),-2px -2px 7px var(--soft-light); }
+.button.primary:hover:not(:disabled),.primary-action:hover:not(:disabled) { background:#535e3e; color:#fffef9; }
+.button.danger { border-radius:11px; }
+.button.secondary:hover:not(:disabled),.icon-button:hover:not(:disabled),.compact-menu > summary:hover { background:var(--sidebar); color:var(--ink); }
+.button:not(:disabled):active,.icon-button:not(:disabled):active,.compact-menu[open] > summary { box-shadow:var(--soft-inset); }
+.button.primary:not(:disabled):active,.primary-action:not(:disabled):active { box-shadow:inset 3px 3px 8px #343c3033,inset -2px -2px 6px #fffef914; }
+.main-navigation button,.profile-button { border-radius:12px; }
+.main-navigation button.active,.folder-button.active,.set-numbers button.active,.segmented button.active { box-shadow:var(--soft-inset); }
+.main-navigation button.active { background:var(--sidebar); color:var(--green); border:1px solid var(--soft-border); }
+.main-navigation button:not(.active) { border:1px solid transparent; }
+.stack-form input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]),.stack-form textarea,.stack-form select,.search-box,.concept-index input,.custom-card-fields textarea,.chat-input {
+  background:var(--paper); border:1px solid var(--soft-border); border-radius:11px; box-shadow:var(--soft-inset);
+}
+.search-box input { background:transparent; box-shadow:none; }
+.modal { background:var(--paper); border:1px solid var(--soft-border); border-radius:20px; box-shadow:14px 14px 40px #343c3029,-8px -8px 28px #faf9f54d; }
+.modal-head { background:var(--paper); }
+.compact-menu > div { background:var(--paper); border:1px solid var(--soft-border); border-radius:12px; box-shadow:var(--soft-raised); }
+.rich-editor { background:var(--paper); border-radius:13px; border-color:var(--soft-border); box-shadow:var(--soft-inset); }
+.format-toolbar,.table-toolbar { background:var(--sidebar); }
+.format-toolbar > button,.table-toolbar button { box-shadow:none; }
+.format-toolbar > button[aria-pressed=true] { box-shadow:var(--soft-inset); }
+.highlight-card-row,.concept-explanation { background:var(--paper); border-radius:13px; box-shadow:var(--soft-inset); }
+.concept-links button,.concept-map foreignObject button { background:var(--paper); border:1px solid var(--soft-border); box-shadow:var(--soft-small); border-radius:10px; }
+.concept-map foreignObject { overflow:visible; }
+.concept-index nav button[aria-current=true] { box-shadow:var(--soft-inset); background:var(--sidebar); }
+.flashcard-face { border-radius:18px; box-shadow:var(--soft-raised); }
+.quiz-option { border-radius:12px; box-shadow:var(--soft-small); }
+.quiz-option.selected { box-shadow:var(--soft-inset); }
+button:focus-visible,summary:focus-visible,a:focus-visible { outline:2px solid var(--green); outline-offset:4px; }
+input:focus-visible,textarea:focus-visible,select:focus-visible { outline:2px solid var(--green); outline-offset:2px; }
+button:disabled { box-shadow:none; }
+/* Resize edges and the annotation surface retain their geometry and layering. */
+.resize-edge,.resize-edge:hover,.resize-edge:active { border:0; border-radius:0; background:transparent; box-shadow:none; }
+@media (max-width:650px) {
+  :root { --soft-raised:4px 4px 11px var(--soft-shade),-4px -4px 11px var(--soft-light); }
+  .upload-card,.material-card,.focus-card,.study-tool-panel,.mistake-notebook { border-radius:14px; }
+  .icon-button { min-width:36px; min-height:36px; }
+  .study-tool-heading { flex-wrap:wrap; }
+  .material-card:hover { transform:none; box-shadow:var(--soft-raised); }
+}
+@media (prefers-reduced-motion:reduce) {
+  .material-card,.button,.icon-button,.compact-menu > summary,.set-numbers button,.main-navigation button { transition:none; }
+  .material-card:hover { transform:none; }
+}
+@media (forced-colors:active) {
+  .upload-card,.stat-card,.material-card,.focus-card,.study-tool-panel,.mistake-notebook,.button,.icon-button,.modal,.rich-editor,.quiz-option,.highlight-card-row,.concept-explanation,.timer-wheel,.concept-links button,.concept-map foreignObject button { box-shadow:none; border:1px solid CanvasText; }
+  .main-navigation button.active,.set-numbers button.active,.segmented button.active { outline:2px solid Highlight; }
+}
+@media print {
+  .print-content,.print-content * { box-shadow:none !important; }
+}

@@ -231,7 +231,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     else { deck=check(await supabase.rpc('create_manual_deck',{ p_folder_id:selectedFolderId.value,p_title:title,p_cards:cards })); await loadFolder() }
     return deck
   }
-  async function saveHighlightCards(source,title,cards,deckId=null) {
+  async function saveHighlightCards(source,title,cards,deckId=null,context=null) {
     if(!canEdit.value || source.kind!=='note')throw new Error('Editor access required.')
     if(!cards.length || cards.length>100 || cards.some(c=>!c.front.trim() || !c.back.trim() || c.front.length>1000 || c.back.length>2000))throw new Error('Each card needs a question and answer within the card limits.')
     if(auth.demo){
@@ -242,8 +242,22 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if(data.length>100 || new TextEncoder().encode(JSON.stringify(data)).length>120000)throw new Error('This deck is full. Create another deck.')
       deck.data=data;persistDemo();return deck
     }
-    const result=check(await supabase.rpc('save_highlight_cards',{p_source_id:source.id,p_title:title,p_cards:cards,p_deck_id:deckId}))
-    await loadFolder(new Set(['study_assets']));return result
+    if(!context?.fingerprint || !Array.isArray(context.highlights))throw new Error('Generate and check these highlights before saving.')
+    const userId=auth.user.id,payload={p_source_id:source.id,p_title:title,p_cards:cards.map(c=>({front:c.front.trim(),back:c.back.trim()})),p_deck_id:deckId,p_highlights:context.highlights,p_fingerprint:context.fingerprint}
+    const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(payload))))).map(b=>b.toString(16).padStart(2,'0')).join('')
+    if(auth.user?.id!==userId)throw new Error('Your account changed before the save started.')
+    const key='synapse.highlight-save.'+userId+'.'+source.id
+    let saved;try{saved=JSON.parse(localStorage.getItem(key) || 'null')}catch{}
+    const requestId=saved?.hash===hash?saved.request_id:crypto.randomUUID()
+    try{localStorage.setItem(key,JSON.stringify({hash,request_id:requestId}))}catch{}
+    const savedResult=check(await supabase.rpc('save_highlight_cards_v2',{p_request_id:requestId,...payload}))
+    const result=Array.isArray(savedResult)?savedResult[0]:savedResult
+    if(!result?.id)throw new Error('The save response was interrupted. Try saving these same cards again.')
+    try{localStorage.removeItem(key)}catch{}
+    if(auth.user?.id!==userId)throw new Error('Your account changed after saving. Reopen your deck when signed in.')
+    // A status reload failure must never turn a committed save into a second append.
+    if(selectedFolderId.value===source.folder_id)await loadFolder(new Set(['study_assets'])).catch(()=>{})
+    return result
   }
   async function updateCustomCard(asset,cardId,front=null,back=null,remove=false) {
     if(!canEdit.value || !asset.is_custom || asset.kind!=='deck') throw new Error('Editor access to a custom deck is required.')

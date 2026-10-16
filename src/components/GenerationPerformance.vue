@@ -1,6 +1,6 @@
 <script setup>
 defineProps({ data:Object })
-const labels={prepare:'Source preparation',note:'Reviewer',deck:'Flashcards',quiz:'Practice quiz'}
+const labels={prepare:'Source preparation',note:'Reviewer',deck:'Flashcards',quiz:'Practice quiz',highlights_generating:'Highlight cards',highlights_checking:'Highlight source check',connections_generating:'Concept connections',connections_checking:'Connection source check'}
 function duration(ms){
  if(ms===null || ms===undefined)return '—'
  const seconds=Math.max(0,Number(ms))/1000

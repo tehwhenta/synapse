@@ -478,3 +478,29 @@ test('Mistake notebook records wrong answers, supports recall and mastery, and c
   auth.user=null;assert.equal(learning.mistakes.length,0)
  }finally{wrapper.unmount();await workspace.dispose()}
 })
+
+test('Highlight extraction preserves equation source and table boundaries instead of duplicated rendered math',async()=>{
+ const {reviewerHighlights,selectedReviewerText}=await import('../src/lib/studyTools.js')
+ const source='<p><mark>Find <span data-type="inline-math" data-latex="x=6"><span>rendered twice</span></span> exactly.</mark></p><table><tr><td>Queue</td><td>FIFO</td></tr></table>'
+ assert.deepEqual(reviewerHighlights(source,'html').map(h=>h.text),['Find x=6 exactly.'])
+ assert.match(rich.plainStudyText(source,'html').replace(/\s+/g,' '),/Queue FIFO/)
+ const host=document.createElement('article');host.innerHTML=source;document.body.append(host)
+ const range=document.createRange();range.selectNodeContents(host);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range)
+ try{assert.equal(selectedReviewerText(host),'Find x=6 exactly. Queue FIFO')}finally{selection.removeAllRanges();host.remove()}
+ const wrapper=mount(runtime.RichEditor,{props:{modelValue:source},attachTo:document.body})
+ try{
+  await flushPromises();const editor=wrapper.findComponent({name:'EditorContent'}).props('editor');editor.commands.selectAll();await flushPromises();await new Promise(resolve=>setTimeout(resolve,30))
+  await wrapper.find('[aria-label="Create flashcard from highlighted text"]').trigger('click')
+  assert.match(wrapper.emitted('flashcard')[0][0],/x=6/)
+  assert.doesNotMatch(wrapper.emitted('flashcard')[0][0],/rendered twice/)
+ }finally{wrapper.unmount()}
+})
+test('AI tool progress distinguishes checking and preview cards clear when their highlights disappear',async()=>{
+ const task={id:'checking',tool:'highlights',tool_phase:'checking',kind:'deck',stage:'deck',status:'processing',completed_kinds:[],stream_chars:120}
+ const progress=mount(runtime.GenerationProgress,{props:{task}})
+ assert.match(progress.text(),/Checking source support/);assert.equal(progress.find('.generation-stream-status').exists(),false);progress.unmount()
+ runtime.setActivePinia(runtime.createPinia());const auth=runtime.useAuthStore();await auth.initialize();const workspace=runtime.useWorkspaceStore();await workspace.load()
+ const asset={...workspace.assets.find(a=>a.kind==='note'),content_format:'html',content:'<p><mark>FIFO means first in first out.</mark></p>'}
+ const wrapper=mount(runtime.HighlightCards,{props:{asset},attachTo:document.body})
+ try{await flushPromises();assert.ok(wrapper.find('form').exists());await wrapper.setProps({asset:{...asset,content:'<p>The reviewer no longer has highlighted text.</p>'}});await flushPromises();assert.equal(wrapper.find('form').exists(),false);assert.match(wrapper.text(),/Highlight a passage first/)}finally{wrapper.unmount();await workspace.dispose()}
+})

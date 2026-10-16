@@ -3,5 +3,6 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import './style.css'
 import 'katex/dist/katex.min.css'
+import './neumorphism.css'
 
 createApp(App).use(createPinia()).mount('#app')

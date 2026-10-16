@@ -1,6 +1,6 @@
-# Files changed in Synapse 2.0.1
+# Files changed in Synapse 2.1.0
 
-This cumulative update replaces the earlier 2.0.0 download and applies directly to 1.9.1. Merge the files; preserve your local connection settings and Git repository. Run SQL 020 → 021, deploy the three functions, then deploy the frontend. See LEARNING_TOOLS_SETUP.md.
+This cumulative update applies over 1.9.1 or 2.0.1. Merge these files into your project. Apply only missing migrations in the order 020 → 021 → 022, and deploy the matching functions as explained in LEARNING_TOOLS_SETUP.md.
 
 - `.gitignore`
 - `LEARNING_TOOLS_SETUP.md`
@@ -15,6 +15,7 @@ This cumulative update replaces the earlier 2.0.0 download and applies directly 
 - `src/components/AdminPanel.vue`
 - `src/components/ConceptConnections.vue`
 - `src/components/FocusTimer.vue`
+- `src/components/GenerationPerformance.vue`
 - `src/components/GenerationProgress.vue`
 - `src/components/HighlightCards.vue`
 - `src/components/Icon.vue`
@@ -23,9 +24,12 @@ This cumulative update replaces the earlier 2.0.0 download and applies directly 
 - `src/components/RichEditor.vue`
 - `src/components/StudyViewer.vue`
 - `src/lib/generationApi.js`
+- `src/lib/richText.js`
 - `src/lib/studyToolSamples.js`
 - `src/lib/studyTools.js`
 - `src/lib/useStudyTool.js`
+- `src/main.js`
+- `src/neumorphism.css`
 - `src/stores/auth.js`
 - `src/stores/learning.js`
 - `src/stores/workspace.js`
@@ -37,9 +41,11 @@ This cumulative update replaces the earlier 2.0.0 download and applies directly 
 - `supabase/functions/generate-study/index.ts`
 - `supabase/functions/generate-study/queue.ts`
 - `supabase/functions/generate-study/reliable.ts`
+- `supabase/functions/generate-study/studyToolVerification.ts`
 - `supabase/functions/generate-study/studyTools.ts`
 - `supabase/migrations/020_learning_tools_and_cleanup.sql`
 - `supabase/migrations/021_ai_study_tools.sql`
+- `supabase/migrations/022_verified_study_tools.sql`
 - `tests/admin-edge.test.mjs`
 - `tests/ai-study-tools.test.mjs`
 - `tests/automatic-workspace.test.mjs`
@@ -49,5 +55,7 @@ This cumulative update replaces the earlier 2.0.0 download and applies directly 
 - `tests/rich-ui.test.mjs`
 - `tests/storage-maintenance.test.mjs`
 - `tests/study-tool-client.test.mjs`
+- `tests/study-tool-integration.test.mjs`
+- `tests/verified-tools-db.test.mjs`
 
-If you tried 2.0.0 locally, delete `src/components/TeachBack.vue`. It is not included or imported in this release.
+If you experimented with 2.0.0, delete its obsolete `src/components/TeachBack.vue`.

@@ -44,7 +44,7 @@ function applyHighlight() {
 }
 function toggleHighlight() { highlightEnabled.value = !highlightEnabled.value; if (highlightEnabled.value) { editor.value.commands.focus(); applyHighlight() }; clearTimeout(highlightTimer) }
 function changeHighlight() { if (highlightEnabled.value) applyHighlight() }
-function fromHighlight(){const current=editor.value;const {from,to}=current.state.selection;if(from<to)emit('flashcard',current.state.doc.textBetween(from,to,' ').trim())}
+function fromHighlight(){const current=editor.value;const {from,to}=current.state.selection;if(from<to)emit('flashcard',current.state.doc.textBetween(from,to,' ',node=>node.attrs?.latex || '').trim())}
 function openComment() { commentText.value = editor.value.getAttributes('comment').text || ''; commentOpen.value = true }
 function saveComment() { editor.value.chain().focus().setMark('comment',{text:commentText.value.trim()}).run(); commentOpen.value = false }
 function setDrawingMode(mode) {

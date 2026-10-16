@@ -33,13 +33,19 @@ export const useLearningStore=defineStore('learning',()=>{
   });saveDemo(items)
  }
  async function setMastered(item,value){
+  const request=version,uid=auth.user?.id;if(!uid)return
   if(auth.demo){const items=demoItems(),row=items.find(m=>m.id===item.id);if(row)row.mastered_at=value?new Date().toISOString():null;saveDemo(items)}
   else {const result=await supabase.from('mistake_items').update({mastered_at:value?new Date().toISOString():null}).eq('id',item.id).eq('user_id',auth.user.id);if(result.error)throw result.error}
+  if(uid!==auth.user?.id)return
+  if(request!==version){revision.value++;return}
   mistakes.value=mistakes.value.filter(m=>m.id!==item.id);revision.value++
  }
  async function remove(item){
+  const request=version,uid=auth.user?.id;if(!uid)return
   if(auth.demo)saveDemo(demoItems().filter(m=>m.id!==item.id))
   else {const result=await supabase.from('mistake_items').delete().eq('id',item.id).eq('user_id',auth.user.id);if(result.error)throw result.error}
+  if(uid!==auth.user?.id)return
+  if(request!==version){revision.value++;return}
   mistakes.value=mistakes.value.filter(m=>m.id!==item.id);revision.value++
  }
  function invalidate(){revision.value++}

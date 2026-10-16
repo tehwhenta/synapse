@@ -1,4 +1,4 @@
-> Current release: **2.0.1**. After this note-saving fix, use [LEARNING_TOOLS_SETUP.md](LEARNING_TOOLS_SETUP.md) for SQL 020 → 021 and the AI study tools.
+> Current release: **2.1.0**. After this note-saving fix, use [LEARNING_TOOLS_SETUP.md](LEARNING_TOOLS_SETUP.md) for SQL 020 → 021 → 022 and the AI study tools.
 
 # Synapse 1.9.1 — note saving and window resizing
 

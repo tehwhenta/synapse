@@ -20,12 +20,12 @@ before(async()=>{
 })
 after(()=>{for(const key of ['__toolAuth','__toolWorkspace','__toolClient'])delete globalThis[key];dom.window.close();try{unlinkSync(runtimePath)}catch{}})
 const asset={id:crypto.randomUUID(),title:'Queues',content:'FIFO means first in first out.',content_format:'markdown'}
-const result={cards:[{highlight_id:'h1',front:'What does FIFO mean?',back:'First in first out.',evidence:{source:'reviewer',quote:asset.content}}]}
+const result={verification:{version:2,checked_items:1},cards:[{highlight_id:'h1',front:'What does FIFO mean?',back:'First in first out.',evidence:{source:'reviewer',quote:asset.content}}]}
 function setup(tool='highlights'){
  localStorage.clear();globalThis.__toolAuth=runtime.reactive({demo:false,user:{id:crypto.randomUUID()}});globalThis.__toolWorkspace={canEdit:true}
  const calls=[],task={id:crypto.randomUUID(),tool,stage:'deck',status:'queued'}
  let cached=false,finished=false
- globalThis.__toolClient={rpc:async(name,args)=>{calls.push([name,args]);return {data:name==='read_study_tool'?{output:cached?result:null}:{task:{...task,status:finished?'completed':'processing'},output:finished?result:null}}},invoke:async(name,args)=>{calls.push([name,args.body]);return {data:{success:true,task}}}}
+ globalThis.__toolClient={rpc:async(name,args)=>{calls.push([name,args]);return {data:name==='read_study_tool'?{fingerprint:'checked-source-hash',output:cached?result:null}:{fingerprint:'checked-source-hash',task:{...task,status:finished?'completed':'processing'},output:finished?result:null}}},invoke:async(name,args)=>{calls.push([name,args.body]);return {data:{success:true,task}}}}
  const Component=runtime.defineComponent({setup(){return runtime.useStudyTool(()=>asset,tool)},render(){return runtime.h('div')}}),wrapper=mount(Component)
  return {wrapper,calls,task,setCached:value=>cached=value,setFinished:value=>finished=value}
 }
@@ -56,7 +56,7 @@ test('Lost acknowledgements reuse a request ID, and late results never cross a s
   globalThis.__toolClient.rpc=()=>new Promise(resolve=>lateResolve=resolve)
   window.dispatchEvent(new dom.window.Event('online'));await flushPromises()
   globalThis.__toolAuth.user=null;await flushPromises();assert.equal(wrapper.vm.output,null);assert.equal(wrapper.vm.task,null);assert.equal(wrapper.vm.busy,false)
-  lateResolve({data:{task:{status:'completed'},output:result}});await flushPromises();assert.equal(wrapper.vm.output,null);assert.equal(wrapper.vm.task,null)
+  lateResolve({data:{fingerprint:'checked-source-hash',task:{status:'completed'},output:result}});await flushPromises();assert.equal(wrapper.vm.output,null);assert.equal(wrapper.vm.task,null)
  }finally{wrapper.unmount()}
 })
 test('A reader cannot reserve new AI work, invalid highlights fail before admission, and source changes surface without a retry loop',async()=>{
@@ -68,5 +68,33 @@ test('A reader cannot reserve new AI work, invalid highlights fail before admiss
   globalThis.__toolClient.rpc=async()=>({error:{message:'Reviewer changed. Save and reopen the study tool'}})
   window.dispatchEvent(new dom.window.Event('online'));await flushPromises()
   assert.match(wrapper.vm.error,/Reviewer changed/);assert.equal(wrapper.vm.busy,false);assert.equal(wrapper.vm.task,null)
+ }finally{wrapper.unmount()}
+})
+
+
+test('Unverified legacy cache results are blocked with a setup message, while completed tasks cannot leave an empty busy panel',async()=>{
+ const {wrapper}=setup()
+ try{
+  globalThis.__toolClient.rpc=async()=>({data:{output:{cards:[]},fingerprint:'old-result'}})
+  await wrapper.vm.generate(['FIFO']);assert.equal(wrapper.vm.output,null);assert.equal(wrapper.vm.busy,false);assert.match(wrapper.vm.error,/Update the study-tools/)
+  globalThis.__toolClient.rpc=async()=>({data:{output:null}})
+  await wrapper.vm.generate(['FIFO'])
+  globalThis.__toolClient.rpc=async()=>({data:{task:{status:'completed'},output:null}})
+  window.dispatchEvent(new dom.window.Event('online'));await flushPromises();assert.equal(wrapper.vm.busy,false);assert.match(wrapper.vm.error,/unavailable/)
+ }finally{wrapper.unmount()}
+})
+test('Source receipts follow the checked result, selections deduplicate, and disconnects retain the same server task',async()=>{
+ const {wrapper,calls,setFinished}=setup()
+ try{
+  await wrapper.vm.generate([' FIFO ','FIFO'])
+  assert.deepEqual(calls.find(([name])=>name==='generate-study')[1].highlights,['FIFO'])
+  const id=wrapper.vm.task.id
+  globalThis.__toolClient.rpc=async()=>({error:{message:'Network disconnected'}})
+  window.dispatchEvent(new dom.window.Event('online'));await flushPromises()
+  assert.equal(wrapper.vm.task.id,id);assert.equal(wrapper.vm.busy,true);assert.match(wrapper.vm.connection,/Reconnecting/)
+  globalThis.__toolClient.rpc=async()=>({data:{output:result,fingerprint:'current-source',task:{id,status:'completed'}}})
+  window.dispatchEvent(new dom.window.Event('online'));await flushPromises()
+  assert.deepEqual(wrapper.vm.context,{fingerprint:'current-source',highlights:['FIFO']});assert.equal(wrapper.vm.connection,'');assert.equal(wrapper.vm.busy,false)
+  wrapper.vm.clear();assert.equal(wrapper.vm.output,null);assert.equal(wrapper.vm.context,null)
  }finally{wrapper.unmount()}
 })

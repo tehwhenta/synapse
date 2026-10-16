@@ -8,7 +8,7 @@ type DraftPipeline<T,R> = {
   validate: (raw: any) => T
   save: (output: T) => Promise<R>
   deadline: number
-  task?: 'source' | 'note' | 'deck' | 'quiz' | 'highlights' | 'connections'
+  task?: 'source' | 'note' | 'deck' | 'quiz' | 'highlights' | 'connections' | 'verification'
   now?: () => number
   pause?: (milliseconds: number) => Promise<void>
   metrics?: GenerationMetrics
@@ -30,6 +30,7 @@ function revisionInstructions(error: StudyDraftError,raw: any,task?: string) {
     exhausted:'Do not confuse earlier coverage with exhaustion. Look for uncovered facets, different reasoning tasks, supported applications and connections using the source rules. One complete useful new question is sufficient. If no useful fresh material is actually supported, report exhaustion without inventing content.',
   }
   if (task==='source') return `\n\nDRAFT REVISION (trusted application instructions):\nThe extraction was not retained. ${error.message.slice(0,350)}\nReturn faithful extracted Markdown only, without JSON or generated study notes/questions. Preserve all legible substantive sections, lists, equations and diagram relationships. Use compact formatting so the extraction finishes within the output budget and 100,000-character limit. Do not guess unreadable information. Do not print this feedback.`
+  if (task==='verification')return `\n\nCHECK FORMAT CORRECTION (trusted application instructions):\n${error.message.slice(0,350)}\nReturn the complete checks JSON object. Re-evaluate the supplied candidates; never change an unsupported verdict to true just to satisfy the format. Use each supplied item ID exactly once and literal boolean values.`
   if (task==='highlights' || task==='connections') return `\n\nDRAFT REVISION (trusted application instructions):\nThe study-tool draft was not saved. ${error.message.slice(0,350)}\nReturn a complete replacement JSON object matching the study-tool contract, without Markdown or commentary. Preserve all supplied highlight IDs for cards; use valid, distinct concept IDs for connections. Copy exact evidence quotes from their cited source and verify that they support the answers or semantic relationships. Do not invent evidence. Do not print this feedback.`
   const rows = raw?.flashcards ?? raw?.cards ?? raw?.quiz ?? raw?.questions ?? raw?.items ?? (Array.isArray(raw)?raw:[])
   const rejected = error.code === 'duplicate' && Array.isArray(rows) ? rows.slice(0,50).map(item => ({ prompt:String(item?.front ?? item?.question ?? '').slice(0,500),coverage_key:item?.coverage_key })).filter(item => item.prompt) : []

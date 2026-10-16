@@ -6,6 +6,7 @@ import { UploadReadError, unreadableUploadMessage } from '../_shared/uploadTypes
 import { GenerationMetrics, reportGenerationMetrics, generationProgressReporter } from './metrics.ts'
 
 export const minimumContinuationBudgetMs=70000
+export const minimumToolContinuationBudgetMs=20000
 
 export function queueRecovery(error: unknown, attempts: number) {
  const message=error instanceof Error?error.message:String(error)
@@ -38,11 +39,12 @@ export async function runQueuedGeneration(admin: any, ticket: any) {
   const progress=generationProgressReporter(admin,task)
   metrics.progress=progress.update
   let succeeded=false
+  let toolPending=false
   try {
    const input:any={action:task.stage==='prepare'?'prepare':'generate',text:task.source_text}
    if(task.document_id){input.document_id=task.document_id;input.kind=task.stage;input.initial=true}
    else input.asset_id=task.asset_id
-   if(task.tool)await executeStudyTool(admin,task,deadline,metrics)
+   if(task.tool){const outcome=await executeStudyTool(admin,task,deadline,metrics);toolPending=outcome?.status==='queued' || outcome?.revising===true}
    else await executeGeneration(admin,task.user_id,input,task,deadline,metrics)
    if(task.stage==='prepare'){
     const done=await admin.rpc('finish_generation_prepare',{p_task_id:task.id,p_lease:task.lease_token})
@@ -59,7 +61,7 @@ export async function runQueuedGeneration(admin: any, ticket: any) {
    await progress.close()
    await reportGenerationMetrics(admin,task,metrics)
   }
-  if(succeeded && stage<3 && (task.stage==='prepare' || task.document_id && !task.kind) && deadline-Date.now()>=minimumContinuationBudgetMs){
+  if(succeeded && stage<3 && (task.tool?toolPending:task.stage==='prepare' || task.document_id && !task.kind) && deadline-Date.now()>=(task.tool?minimumToolContinuationBudgetMs:minimumContinuationBudgetMs)){
    const next=await admin.rpc('continue_generation_task',{p_task_id:task.id,p_previous_lease:task.lease_token})
    if(!next.error && next.data){task=next.data;continue}
   }

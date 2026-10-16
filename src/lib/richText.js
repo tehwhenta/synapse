@@ -45,7 +45,7 @@ export function noteHtml(content, format = 'markdown') { return cleanHtml(format
 export function plainStudyText(content, format = 'markdown') {
   const el = document.createElement('div'); el.innerHTML = noteHtml(content, format)
   for (const node of el.querySelectorAll('[data-latex]')) node.textContent = node.dataset.latex
-  for (const node of el.querySelectorAll('p,h1,h2,h3,h4,li,tr,blockquote,div')) node.append('\n')
+  for (const node of el.querySelectorAll('p,h1,h2,h3,h4,h5,h6,li,td,th,tr,blockquote,div')) node.append('\n')
   return (el.textContent || '').trim()
 }
 

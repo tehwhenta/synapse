@@ -1,63 +1,67 @@
-# Synapse 2.0.1 — AI study tools and cleanup
+# Synapse 2.1.0 — source-checked tools and neumorphic UI
 
-Use this replacement update instead of the earlier 2.0.0 ZIP. Since you have not installed 2.0.0, this ZIP includes both its retained improvements and your latest refinements. It applies to the existing 1.9.1 project, with SQL migrations through 019 already installed.
+Use this cumulative replacement instead of the earlier 2.0.0/2.0.1 ZIP. It includes those improvements and the latest accuracy, integration and interface changes. It supports your existing 1.9.1 project or the 2.0.1 update.
 
-## Replace the local files
+## 1. Merge the project files
 
-1. Extract `Synapse_Learning_Tools_Update.zip`.
-2. Merge the contents of its `Synapse_Project` folder into `C:\Users\Asus\3D Objects\Synapse_Project`. Replace matching files and add new ones. Keep your `.env` and `.git`.
-3. Replace `package.json` and `package-lock.json` together. No new dependencies are required.
-4. `UPDATED_FILES.md` lists the complete cumulative replacement. You do not need the previous 2.0.0 ZIP.
+Extract `Synapse_Learning_Tools_Update.zip`. Merge the contents of its `Synapse_Project` folder into `C:\Users\Asus\3D Objects\Synapse_Project`, replacing matching files and adding new ones. Keep your local connection settings and Git repository.
 
-If you experimented with 2.0.0 locally, delete `src/components/TeachBack.vue`. It has been removed from this release. If your base is older than 1.9.1, use the full project ZIP and finish the earlier migrations through 019 first. Do not rerun successful migrations.
+Replace both package files together. No new dependencies are required. The update includes `src/neumorphism.css` and its import in `src/main.js`; copy the complete update listed in `UPDATED_FILES.md`.
 
-## Supabase — run two SQL files in order
+If you tried 2.0.0 locally, delete its obsolete `src/components/TeachBack.vue`. It is absent from this release. Projects older than 1.9.1 should first complete the earlier setup through SQL 019.
 
-Open your existing Supabase project, then **SQL Editor → New query**. Copy and run each entire file separately:
+## 2. Supabase: run only missing migrations
 
-| Order | Local SQL file | Purpose |
+Open your existing project → **SQL Editor → New query**. Copy and run each entire missing SQL file separately, in this order:
+
+| File | Apply when | Purpose |
 | --- | --- | --- |
-| 1 | `supabase/migrations/020_learning_tools_and_cleanup.sql` | 10 MB profile photos, private Mistake Notebook, custom-deck saving and safe storage cleanup |
-| 2 | `supabase/migrations/021_ai_study_tools.sql` | Gemini highlight cards and concept maps, cached results, queue integration and access checks |
+| `supabase/migrations/020_learning_tools_and_cleanup.sql` | 020 has not run | 10 MB profile photos, private Mistake Notebook, custom-card saving and safe file cleanup |
+| `supabase/migrations/021_ai_study_tools.sql` | 021 has not run | AI tool jobs, source fingerprints, cache and shared queue integration |
+| `supabase/migrations/022_verified_study_tools.sql` | New for this update | Durable source-checking stages, repeat-safe saves, source guards, timing corrections and receipt cleanup |
 
-Keep RLS enabled. If 020 has already run successfully, run only 021. These migrations preserve saved reviewers, generated sets, annotations, custom decks, card schedules and study progress.
+**If you already applied 020 and 021, run only 022.** Do not rerun successful migrations. Keep RLS enabled.
 
-## Supabase — replace three functions
+022 rebuilds derived AI-tool previews on their next opening. Your saved reviewers, decks, practice quizzes, annotations and review schedules remain available. Finish any active tool request and save open note drafts before updating. Apply SQL and deploy the function below before using the new frontend.
 
-Go to **Edge Functions → the named function → Code**, replace the entire Dashboard `index.ts` with the entire corresponding local **dashboard** file, then deploy. Do this for every row:
+## 3. Supabase: deploy the matching functions
 
-| Function name | Local file to copy in full |
-| --- | --- |
-| `generate-study` | `supabase/dashboard/generate-study.ts` |
-| `cleanup-files` | `supabase/dashboard/cleanup-files.ts` |
-| `admin-maintenance` | `supabase/dashboard/admin-maintenance.ts` |
+For each required row, go to **Edge Functions → the named function → Code**. Replace the entire Dashboard `index.ts` with the entire corresponding local **dashboard** file, then deploy:
 
-Keep gateway **Verify JWT OFF** for these functions. The application verifies authentication itself: `generate-study` checks the user and source permissions; `admin-maintenance` also checks the server-stored admin role; scheduled workers require the server-only `CRON_SECRET`. RLS remains ON.
+| Function | Local file to copy in full | Required |
+| --- | --- | --- |
+| `generate-study` | `supabase/dashboard/generate-study.ts` | Every installation of 2.1.0 |
+| `cleanup-files` | `supabase/dashboard/cleanup-files.ts` | If you did not deploy the 2.0.1 cleanup update |
+| `admin-maintenance` | `supabase/dashboard/admin-maintenance.ts` | If you did not deploy the 2.0.1 maintenance update |
 
-Do not rename any files. The smaller `functions/.../index.ts` files import sibling modules. When using the Dashboard editor, paste the combined `dashboard/...ts` files above.
+Keep gateway **Verify JWT OFF** for these functions. The handlers verify users, source permissions, admin roles or the server-only cron secret themselves. Database RLS remains ON.
 
-Keep your existing `GEMINI_API_KEY`, working `GEMINI_MODEL`, `CRON_SECRET`, `ALLOWED_ORIGINS` and built-in Supabase credentials. `ALLOWED_ORIGINS` must include `https://rcgsynapse.vercel.app` and `http://localhost:5173` if you use local development. Gemini requests stay on the server; do not add the Gemini key to Vercel's frontend environment variables.
+Do not rename files. Dashboard files are combined, ready-to-paste versions. The smaller `functions/.../index.ts` files import sibling modules and are intended for CLI deployment.
 
-CLI alternative, from your project root:
+Keep your existing `GEMINI_API_KEY`, working `GEMINI_MODEL`, `CRON_SECRET` and built-in Supabase credentials. `ALLOWED_ORIGINS` should include `https://rcgsynapse.vercel.app` and `http://localhost:5173` if you develop locally. Gemini credentials stay in Supabase, not frontend environment variables.
+
+CLI alternative from the project root:
 
 ```sh
 npx supabase functions deploy generate-study --project-ref etrhrxhgyslqjxgdgedg --no-verify-jwt
+```
+
+If you are also installing the earlier cleanup improvements:
+
+```sh
 npx supabase functions deploy cleanup-files --project-ref etrhrxhgyslqjxgdgedg --no-verify-jwt
 npx supabase functions deploy admin-maintenance --project-ref etrhrxhgyslqjxgdgedg --no-verify-jwt
 ```
 
-## Keep the existing schedules
+## 4. Keep automatic schedules active
 
-In **Supabase → Cron**, confirm:
+In **Supabase → Cron**, keep the generation dispatcher at **15 seconds** and `synapse-cleanup-files` at **10 minutes**. No new cron job is needed. If cleanup is absent or still hourly, run the existing `supabase/migrations/005_cleanup_interval.sql` after deploying its function.
 
-- `synapse-cleanup-files` is active and runs every **10 minutes**. If missing or still hourly, run the existing `supabase/migrations/005_cleanup_interval.sql` after deploying the functions. It reuses the same job name.
-- Your existing generation queue schedule remains active at **15 seconds**. The new tools use that same dispatcher; they do not need another schedule.
+The schedules use the existing Vault `synapse_project_url` and `synapse_cron_secret`; the latter must match `CRON_SECRET` in Edge Function Secrets. Source checking resumes through this same scheduler, including after temporary AI throttling.
 
-The schedules use the existing Vault `synapse_project_url` and `synapse_cron_secret`. The latter must match the function's `CRON_SECRET`.
+Expired originals and objects unreferenced for over 24 hours continue to be removed through the Storage API, with reference checks and bounded batches. Technical job cleanup also removes save-retry receipts older than 30 days. Both Storage buckets stay private.
 
-Cleanup removes expired originals through the Storage API while protecting live generation leases. Saved sets and retained source text stay available. It also removes unreferenced objects in `study-files` and `profile-photos` after **24 hours**, rechecking references and briefly reserving the path to avoid deletion races. Each run handles bounded batches; failed removals stay eligible for later runs. Existing cleanup of expired invitations, old technical records and due account deletions continues. The admin's System care action uses the same worker. Both buckets remain private.
-
-## Test and deploy to Vercel
+## 5. Test and deploy the frontend
 
 From your Windows project folder:
 
@@ -67,32 +71,33 @@ npm test
 npm run build
 ```
 
-After these pass, commit and push to your existing GitHub repository. Vercel will build the update for `rcgsynapse.vercel.app`. Apply 020 → 021 and deploy all three functions before pushing the frontend. Save open note drafts before refreshing the deployed app.
+After these pass, commit and push to your GitHub repository for Vercel deployment at `rcgsynapse.vercel.app`. Reopen the deployed app after the backend and frontend have both been updated.
 
-## Use the refined features
+## What improved
 
-| Feature | Where and how |
-| --- | --- |
-| Mistake Notebook | **My progress → notebook icon**, or a quiz viewer's three-dot menu. Completed quiz mistakes are recorded privately. Practise recall, mark understood, reopen or delete entries. |
-| Flashcards from Highlights | Select a passage in a reviewer, then **three-dot menu → Flashcards from highlights**. Without a selection, it uses saved highlights. The editor also has a card icon for selected text. Gemini prepares focused questions and complete answers automatically; review or edit them, then save to a new custom deck or append to your own deck. |
-| Concept Connections | **Reviewer → three-dot menu → Concept connections**. Gemini identifies supported semantic relationships. Click nodes to explore; click a relationship for its explanation. Expand **Source** to inspect the supporting passage. |
-| Focus | The timer is now titled **Focus**. Its minus/plus buttons, mouse wheel and keyboard controls adjust minutes while stopped. Rename uses a text cursor icon; editing keeps the pen icon. |
-| Profile photo | Profile settings accept JPG, PNG or WEBP photos up to **10 MB**. |
+- **Source support:** Flashcards from Highlights and Concept Connections now use a separate AI source-support check. Each complete answer, concept definition and directed relationship is checked, including qualifications, negation, units and calculations. An exact quote by itself is no longer sufficient to publish a result.
+- **Durable checking:** A validated draft is saved privately before checking starts. If checking is interrupted or throttled, the next worker resumes that draft. It does not pay for another full generation just to retry verification. Unsupported claims receive up to two semantic revisions; insufficient context produces a clear request for better source material.
+- **Shared scheduling:** Both tool stages use the same **3 overall / 2 per user** limits and FIFO fairness. Unbound reviewer notes also receive the per-source guard. Prepared tools never become extra reviewer sets or overwrite existing study sets.
+- **Cache reuse:** Checked results are reused when the source and highlights match. Renaming alone keeps the cache valid. A source edit invalidates the corresponding result. The cache identifies the current verification contract, so older unchecked previews are rebuilt.
+- **Reliable saving:** Retrying the same highlight-card save after a lost acknowledgement returns the same deck or append for 30 days. Existing card IDs and review schedules are preserved. A list-refresh failure after a committed save does not cause another append. A changed source is checked again before a new save.
+- **Formatted and math selections:** Highlight extraction preserves equation source, literal code, multiplication, subscripts and table boundaries. It avoids duplicated visual math text and does not split words around inline formatting.
+- **Progress and measurements:** Users see “Checking source support” during verification. System care reports generation and checking separately; a normal phase transition is not counted as a worker retry. Status polling backs off during disconnections and stops when the panel closes.
+- **Mistake Notebook:** Server-graded quiz mistakes stay personal. Late mastery/deletion responses cannot alter another signed-in account’s state.
+- **Neumorphic UI:** Soft raised cards, inset inputs, tactile icon buttons and selected states use the existing cream, sand, taupe, olive and clay palette. Headline fonts, accessible focus outlines, color contrast, reduced-motion support, reviewer resizing and drawing layers are preserved.
 
-The tools save a changed reviewer before asking Gemini to use it. A failed save keeps the draft open and does not start AI work. Accepted AI work continues if its panel is closed; reopening resumes its task or reads the cached result.
+The two AI tools use your existing Gemini quota. A fresh result normally uses one draft request and one source-check request; corrections can require more. Cache hits avoid provider requests. Reviewers retain their existing comprehensive prompts and output budgets, and an uploaded material still automatically generates its reviewer, flashcards and practice quiz.
 
-These two AI tools use your existing Gemini quota. Identical requests reuse cached results; renaming alone does not invalidate the cache. Changing reviewer content or its retained source requires a fresh result. Each reviewer retains at most one current cached result for each tool; old technical job receipts use the existing cleanup retention. The tools share the **3 overall / 2 per user** generation capacity, automatic recovery and streaming progress. They do not overwrite existing study sets.
+## Where to use the features
 
-Highlight generation handles up to 20 selected passages at a time. Use the collapsed Highlights picker if you want a different group. Each result must include every selected highlight ID, without repeated questions. Concept maps use directed, specific relationships with explanations, rather than merely connecting words that share a paragraph. The backend checks output structure, IDs, duplicates and exact source quotes, and repairs invalid drafts within the same request. Source checks improve grounding; AI answers and interpretations still need review.
+- **Flashcards from Highlights:** Select text in a reviewer → three-dot menu → Flashcards from highlights. With no selection, saved highlights are used. The editor’s card icon also works. Review/edit the prepared cards, then save a new custom deck or append to one of your own decks in the same space. The collapsed picker handles up to 20 highlights at a time.
+- **Concept Connections:** Reviewer → three-dot menu → Concept connections. Click a concept or relationship to inspect its definition, direction, explanation and source. Shared-space viewers can open cached maps; an editor prepares new ones.
+- **Mistake Notebook:** My progress → notebook icon, or a quiz viewer’s three-dot menu. Review wrong answers, practise recall, mark understood or delete entries.
+- **Focus:** The timer keeps its wheel, keyboard and minus/plus controls. Profile photos remain limited to 10 MB. Teach-Back remains removed.
 
-Shared-space viewers can read cached connections. An editor prepares a new map when needed. Personal Mistake Notebook entries remain private even in shared spaces. Their question/answer snapshots survive deletion of the original quiz, and account deletion cascades through the user's notebook and tool-cache records.
-
-Teach-Back has been removed. The earlier 2.0 improvements remain: icon controls, three-dot menus, 10 MB photos and automatic cleanup. The visible “Your personal workspace” and “Start focus” labels stay removed.
-
-The disconnected preview displays explicitly labeled, authored **Sample** results for its example content. Arbitrary uploaded or edited materials require the connected Supabase project and Gemini; the preview does not pretend to call Gemini without credentials.
+The disconnected preview uses explicitly labeled, authored Sample results. Your connected deployment uses Gemini. Source-support checks improve grounding but cannot guarantee factual correctness in all source material or model outputs; inspect important facts and calculations against your course material.
 
 ## Verification
 
-All **203 checks across 34 test files** were verified, and the production build passed. Database, worker and UI checks cover cache reuse/invalidation, shared capacity, worker leases, access revocation, source evidence, internal draft correction, lost acknowledgements, account changes, mobile timer icons, retained sets and the existing editor, cleanup and generation flows. The production build is also checked.
+All **219 automated checks across 36 test files** passed, and the production build passed. Coverage includes independent source verdicts, bounded corrections, private checkpoints, interrupted checks, stale sources, permissions, queue limits/fairness, cache reuse, repeat-safe saves, account changes, equations and existing editor/generation/cleanup behavior.
 
-Live Gemini, your hosted Supabase project and native mobile/browser layout cannot be verified from this workspace. After deploying, open a reviewer, generate and save one highlight card, explore its concept map, reopen both tools to confirm cache reuse, and inspect the next scheduled cleanup result in System care.
+Live Gemini, your hosted Supabase database and native desktop/mobile layout were not exercised here. After deploying, generate one highlight deck and one concept map, confirm the checking stage appears, reopen both to check cache reuse, and inspect System care’s stage timings and the next cleanup result.
